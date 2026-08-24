@@ -92,10 +92,12 @@ def extract_rtf(path: Path) -> Extraction:
     text = rtf_to_text(raw)
     if not text.strip():
         raise ExtractionError("RTF не содержит извлекаемого текста")
-    warnings = ()
+    warning_list: list[str] = []
     if not re.search(r"\\(?:highlight|chcbpat)\\d+", raw, re.IGNORECASE):
-        warnings = ("RTF не содержит inline-маркеров жёлтой подсветки; выделения в редакторе могут быть сохранены только как стиль.",)
-    return Extraction(text=text, warnings=warnings, marked=_rtf_highlights(raw, text))
+        warning_list.append("RTF не содержит inline-маркеров жёлтой подсветки; выделения в редакторе могут быть сохранены только как стиль.")
+    if re.search(r"\\(?:shppict|pict|object)\b", raw, re.IGNORECASE):
+        warning_list.append("RTF содержит встроенные рисунки; в anonymized-версии все встроенные рисунки будут удалены.")
+    return Extraction(text=text, warnings=tuple(warning_list), marked=_rtf_highlights(raw, text))
 
 
 def _rtf_highlights(raw: str, text: str) -> tuple[dict[str, Any], ...]:
@@ -240,7 +242,7 @@ def replace_rtf(raw: str, source_text: str, changes: list[tuple[int, int, str]])
     if parsed_text != source_text:
         raise ExtractionError("Не удалось сопоставить текст RTF с исходным форматированием")
     if not changes:
-        return raw
+        return remove_rtf_graphics(raw)
     if any(start < 0 or end > len(chunks) or start >= end for start, end, _ in changes):
         raise ExtractionError("Некорректные позиции замены в RTF")
     patches: list[tuple[int, int, str]] = []
@@ -251,6 +253,35 @@ def replace_rtf(raw: str, source_text: str, changes: list[tuple[int, int, str]])
         patches.append((raw_start, raw_end, escaped))
     for raw_start, raw_end, replacement in sorted(patches, reverse=True):
         raw = raw[:raw_start] + replacement + raw[raw_end:]
+    return remove_rtf_graphics(raw)
+
+
+def remove_rtf_graphics(raw: str) -> str:
+    starts = list(re.finditer(r"\{\\(?:\*\\)?(?:shppict|pict|object)\b", raw, re.IGNORECASE))
+    ranges: list[tuple[int, int]] = []
+    for match in starts:
+        depth = 0
+        index = match.start()
+        while index < len(raw):
+            char = raw[index]
+            if char == "\\":
+                index += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    ranges.append((match.start(), index + 1))
+                    break
+            index += 1
+    kept: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if kept and end <= kept[-1][1]:
+            continue
+        kept.append((start, end))
+    for start, end in reversed(kept):
+        raw = raw[:start] + raw[end:]
     return raw
 
 

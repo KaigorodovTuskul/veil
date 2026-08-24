@@ -105,7 +105,7 @@ Automatic detection is best-effort and does not guarantee that every sensitive v
 
 ## Limitations
 
-- DOC/DOCX/PDF output is plain text; original formatting is not preserved. RTF output keeps the original RTF structure and formatting while replacing detected text.
+- DOC/DOCX/PDF output is plain text; original formatting is not preserved. RTF output keeps the original RTF structure and formatting while replacing detected text. Embedded RTF pictures and drawing objects are removed from anonymized output.
 - OCR is disabled. Image-only PDF pages are refused or reported as incomplete.
 - PPTX is not supported yet.
 - Mapping files are currently plain JSON and are not encrypted.
