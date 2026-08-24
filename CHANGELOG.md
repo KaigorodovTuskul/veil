@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+- Made regex matching case-insensitive for uppercase documents.
+- Added normalization for invisible spaces and dash variants.
+- Added organization suffix detection for joined and spaced names such as `Пупкинбанк` and `Пуп кинбанк`.
+- Documented launcher arguments in `run_cmd.bat`.
 - Added `--auto` mode for unattended replacement.
 - Added Russian, English, and Simplified Chinese UI via `--lang` or `VEIL_LANG`.
 - Replaced source-based output names with neutral `document_NNN` names; original filenames remain only in private mappings.

@@ -16,6 +16,7 @@ from i18n import LANGUAGES, entity_label, language, set_language, tr
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
 TEXT_FORMATS = {".txt", ".json", ".csv", ".rtf"}
+MATCH_FLAGS = re.IGNORECASE
 SCRIPT_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 
 
@@ -40,9 +41,10 @@ def write_text(path: Path, text: str, encoding: str) -> None:
 
 
 def find_candidates(text: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = text.translate(str.maketrans({"\u00a0": " ", "\u200b": " ", "\ufeff": " ", "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-"}))
     candidates: list[dict[str, Any]] = []
     for priority, rule in enumerate(rules):
-        for match in re.compile(rule["regex"]).finditer(text):
+        for match in re.compile(rule["regex"], MATCH_FLAGS).finditer(text):
             group = rule.get("value_group")
             start, end = match.span(group or 0)
             value = text[start:end]
@@ -200,6 +202,12 @@ def self_test() -> None:
     assert auto_result == result
     assert auto_mapping == mapping
     assert auto_count == 3
+    production_rules = load_rules()
+    uppercase = "ФИО: ИВАНОВ ИВАН, ООО ПУПКИНБАНК"
+    uppercase_candidates = find_candidates(uppercase, production_rules)
+    assert {candidate["value"] for candidate in uppercase_candidates} == {"ИВАНОВ ИВАН", "ООО ПУПКИНБАНК"}
+    variants = find_candidates("Пупкинбанк; Пуп кинбанк", production_rules)
+    assert {candidate["value"] for candidate in variants} == {"Пупкинбанк", "Пуп кинбанк"}
     print(tr("self_test"))
 
 

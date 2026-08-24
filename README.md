@@ -125,7 +125,9 @@ For each detected value, choose:
 
 Repeated values receive the same placeholder, such as `{{PERSON_1}}` or `{{EMAIL_1}}`.
 
-Rules are editable in [`patterns.json`](patterns.json). Detection is heuristic and best-effort: always inspect the anonymized document manually before sending it outside the machine.
+Rules are editable in [`patterns.json`](patterns.json). Matching is case-insensitive, so uppercase text is checked too. Common invisible spaces, Unicode dash variants, repeated spaces, and organization names with known suffixes are supported, including examples such as `Пупкинбанк` and `Пуп кинбанк`.
+
+Detection is heuristic and best-effort. Arbitrary misspellings are not guessed without context because fuzzy matching can hide normal words by mistake. Always inspect the anonymized document manually before sending it outside the machine.
 
 ## Restore an anonymized text file
 
