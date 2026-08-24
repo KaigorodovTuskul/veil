@@ -106,15 +106,15 @@ Supported input formats:
 
 PPTX and OCR are not included yet. Image-only PDF pages are reported as unsafe/incomplete and are not silently treated as clean text.
 
-Output filenames are deliberately neutral because sensitive information may be present in the source filename:
+Output filenames preserve non-sensitive parts and replace detected sensitive fragments:
 
 ```text
-input\Ivanov_Nikolay_contract.txt
-output\document_001.anonymized.txt
-output\document_001.txt.mapping.json
+input\818-ПЛ Положение о фонде акционирования работников АКБ Example_Organization ОАО.rtf
+output\818-ПЛ Положение о фонде акционирования работников.anonymized.rtf
+output\818-ПЛ Положение о фонде акционирования работников.rtf.mapping.json
 ```
 
-The original filename is stored only in the private mapping file. It is never copied to the output filename.
+Detected sensitive fragments are removed from the output filename; the remaining safe parts are preserved. If no sensitive fragment is detected, the original filename stem is preserved. The original full filename and the removed fragment are stored in the private mapping file. Review mapping files before sharing them.
 
 DOC, DOCX, and PDF are currently extracted to plain text. RTF keeps its RTF structure and formatting while replacing text; embedded RTF pictures and drawing objects are removed from the anonymized copy. The program prints warnings when a file contains unsupported or potentially unsafe content.
 

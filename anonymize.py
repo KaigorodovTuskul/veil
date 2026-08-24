@@ -86,9 +86,9 @@ def context(text: str, start: int, end: int, width: int = 55) -> str:
     return f"{snippet[:marker_start]}>>> {snippet[marker_start:marker_end]} <<<{snippet[marker_end:]}"
 
 
-def token_for(entity_type: str, counters: dict[str, int]) -> str:
+def token_for(entity_type: str, counters: dict[str, int], prefix: str = "") -> str:
     counters[entity_type] = counters.get(entity_type, 0) + 1
-    return f"{{{{{entity_type}_{counters[entity_type]}}}}}"
+    return f"{{{{{prefix}{entity_type}_{counters[entity_type]}}}}}"
 
 
 def ask(candidate: dict[str, Any], text: str) -> str:
@@ -102,7 +102,7 @@ def ask(candidate: dict[str, Any], text: str) -> str:
         print(tr("invalid_choice"))
 
 
-def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
+def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False, token_prefix: str = "") -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
     candidates = find_candidates(text, rules) + list(marked)
     candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
     selected: list[dict[str, Any]] = []
@@ -127,7 +127,7 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
             decisions[key] = "replace" if decision in {"1", "3"} else "skip"
         if decisions[key] == "replace":
             if token is None:
-                token = token_for(candidate["type"], counters)
+                token = token_for(candidate["type"], counters, token_prefix)
                 replacements[key] = token
             changes.append((candidate["start"], candidate["end"], token))
 
@@ -155,8 +155,12 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_numb
         print(tr("warning", value=warning), file=sys.stderr)
     validate_json_if_needed(path, text)
     anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked, auto=auto)
+    safe_stem, filename_mapping, filename_count, _ = anonymize(path.stem, rules, auto=auto, token_prefix="FILENAME_")
+    mapping.update(filename_mapping)
+    for token in filename_mapping:
+        safe_stem = safe_stem.replace(token, "")
     output_dir.mkdir(parents=True, exist_ok=True)
-    safe_stem = f"document_{file_number:03d}"
+    safe_stem = re.sub(r"[ \t]{2,}", " ", safe_stem).strip(" ._-\t") or f"document_{file_number:03d}"
     result = output_dir / (f"{safe_stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{safe_stem}{path.suffix}.anonymized.txt")
     map_path = output_dir / f"{safe_stem}{path.suffix}.mapping.json"
     if path.suffix.lower() == ".rtf":
@@ -167,7 +171,7 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_numb
     mapping_payload = dict(mapping)
     mapping_payload["_veil"] = {"original_filename": path.name}
     map_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"\n{tr('done', replaced=count, found=len(find_candidates(text, rules)))}")
+    print(f"\n{tr('done', replaced=count + filename_count, found=len(find_candidates(text, rules)) + len(find_candidates(path.stem, rules)))}")
     print(tr("file", value=result))
     print(tr("mapping", value=map_path))
     print(tr("filename_hidden", value=result.name))
@@ -218,6 +222,11 @@ def self_test() -> None:
     assert {candidate["value"] for candidate in uppercase_candidates} == {"ИВАНОВ ИВАН", "ООО ПУПКИНБАНК"}
     variants = find_candidates("Пупкинбанк; Пуп кинбанк", production_rules)
     assert {candidate["value"] for candidate in variants} == {"Пупкинбанк", "Пуп кинбанк"}
+    filename_result, filename_mapping, _, _ = anonymize("1011-ПЛ АКБ Пупкинбанк", production_rules, auto=True, token_prefix="FILENAME_")
+    assert filename_result == "1011-ПЛ {{FILENAME_ORGANIZATION_1}}"
+    assert filename_mapping == {"{{FILENAME_ORGANIZATION_1}}": "АКБ Пупкинбанк"}
+    safe_filename = re.sub(r"[ \t]{2,}", " ", filename_result.replace("{{FILENAME_ORGANIZATION_1}}", "")).strip(" ._-\t")
+    assert safe_filename == "1011-ПЛ"
     sample_rtf = replace_rtf(r"{\rtf1\ansi Test\par}", "Test\n", [(0, 4, "{{PERSON_1}}")])
     assert sample_rtf == r"{\rtf1\ansi \{\{PERSON_1\}\}\par}"
     print(tr("self_test"))
