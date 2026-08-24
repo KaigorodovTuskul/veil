@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive, local PII replacement for TXT, JSON and CSV files."""
+"""Interactive, local PII replacement with input/output folder mode."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from typing import Any
 from extractors import ExtractionError, extract, validate_json_if_needed
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
-SCRIPT_DIR = Path(__file__).resolve().parent
+TEXT_FORMATS = {".txt", ".json", ".csv"}
+SCRIPT_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -125,7 +126,7 @@ def output_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
 
-def process(path: Path, rules: list[dict[str, Any]]) -> None:
+def process(path: Path, rules: list[dict[str, Any]], output_dir: Path) -> None:
     if path.suffix.lower() not in SUPPORTED:
         raise ValueError(f"Формат {path.suffix or '<без расширения>'} пока не поддерживается")
     extraction, encoding = extract(path)
@@ -134,8 +135,9 @@ def process(path: Path, rules: list[dict[str, Any]]) -> None:
         print(f"ВНИМАНИЕ: {warning}", file=sys.stderr)
     validate_json_if_needed(path, text)
     anonymized, mapping, count = anonymize(text, rules)
-    result = output_path(path, ".anonymized") if path.suffix.lower() in {".txt", ".json", ".csv"} else path.with_name(f"{path.stem}.anonymized.txt")
-    map_path = path.with_name(f"{path.name}.mapping.json")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = output_dir / (f"{path.stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{path.name}.anonymized.txt")
+    map_path = output_dir / f"{path.name}.mapping.json"
     write_text(result, anonymized, encoding)
     map_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"\nГотово: заменено {count}, найдено всего {len(find_candidates(text, rules))}")
@@ -188,14 +190,23 @@ def main() -> int:
     if args.restore:
         restore_file(Path(args.restore[0]), Path(args.restore[1]))
         return 0
-    if not args.files:
-        parser.print_help()
-        return 0
-
     rules = load_rules()
-    for path in args.files:
+    input_dir = SCRIPT_DIR / "input"
+    output_dir = SCRIPT_DIR / "output"
+    input_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True)
+    files = args.files or sorted(
+        (path for path in input_dir.iterdir() if path.is_file() and path.suffix.lower() in SUPPORTED),
+        key=lambda path: path.name.lower(),
+    )
+    if not files:
+        print(f"Input folder is empty: {input_dir}")
+        print("Drop TXT, JSON, CSV, DOC, DOCX, RTF or PDF files there and run again.")
+        return 0
+    print(f"Processing {len(files)} file(s) into {output_dir}")
+    for path in files:
         try:
-            process(path, rules)
+            process(path, rules, output_dir)
         except KeyboardInterrupt:
             print("\nОстановлено. Исходный файл не изменён.")
             return 130

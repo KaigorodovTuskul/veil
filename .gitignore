@@ -17,3 +17,9 @@ dist/
 
 # Local test/helper files
 check.bat
+
+# User documents and generated results
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep

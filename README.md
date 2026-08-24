@@ -1,92 +1,109 @@
 # Veil
 
-Локальный интерактивный анонимизатор документов перед передачей текста в LLM.
+Veil is a lightweight, local document anonymizer for preparing files before sending their text to an LLM.
 
-Veil работает без GUI и без локальной LLM. Он находит чувствительные данные по регулярным правилам, показывает каждое совпадение и спрашивает, заменять ли его. Исходный файл не изменяется.
+It has no GUI and no local LLM. The program finds sensitive values with configurable regular-expression rules, asks for confirmation, and writes anonymized results without changing the original files.
 
-## Поддерживаемые форматы
+## Quick start
 
-- TXT, JSON, CSV — обработка текста с сохранением расширения.
-- DOCX — извлечение текста из OOXML.
-- DOC — извлечение текста из старого бинарного Word через `legacy-doc`.
-- RTF — преобразование в обычный текст через `striprtf`.
-- PDF — извлечение текстового слоя через `pypdf`.
+1. Put source files into the `input` folder.
+2. Run `run_cmd.bat`.
+3. Take anonymized files from the `output` folder.
 
-PPTX пока не поддерживается. OCR пока не включён: PDF, состоящий только из изображений, будет остановлен с предупреждением.
+Supported input formats:
 
-## Быстрый запуск с Python
+- TXT, JSON, CSV
+- DOCX
+- DOC (legacy Word)
+- RTF
+- PDF with an extractable text layer
+
+PPTX and OCR are not supported yet. Image-only PDFs are rejected with a warning instead of producing a potentially unsafe result.
+
+## Portable package
+
+The repository includes a build script for Windows. The target machine does not need Python and no system environment variables are changed.
+
+On the build machine:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
+```
+
+The portable package is created in `dist\anonymizer\` and contains:
+
+```text
+anonymizer.exe
+patterns.json
+run_cmd.bat
+```
+
+Copy that folder to another Windows machine, put files into its `input` folder, and run its `run_cmd.bat`.
+
+## Development mode
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe anonymize.py --self-test
-.\run_cmd.bat document.docx
 ```
 
-Последнюю команду можно заменить на:
+Running `anonymize.py` without arguments uses `input` and `output` next to the script. File paths can also be passed directly for development:
 
 ```powershell
 .\.venv\Scripts\python.exe anonymize.py document.docx
 ```
 
-Во время обработки:
+## Review actions
+
+For each detected value:
 
 ```text
-1 — заменить это совпадение
-2 — пропустить
-3 — заменить все такие значения
-4 — выйти
+1 - replace this value
+2 - skip this value
+3 - replace all occurrences of this value
+4 - stop without modifying the source
 ```
 
-## Результаты
+Repeated values receive the same placeholder, for example `{{PERSON_1}}` or `{{EMAIL_1}}`.
 
-Для `document.txt`:
+## Output and restoration
+
+Text formats keep their extension:
 
 ```text
-document.anonymized.txt
-document.txt.mapping.json
+input\contract.txt
+output\contract.anonymized.txt
+output\contract.txt.mapping.json
 ```
 
-Для DOC/DOCX/RTF/PDF результатом является очищенный текст:
+Document formats are converted to cleaned text:
 
 ```text
-document.anonymized.txt
-document.docx.mapping.json
+input\contract.docx
+output\contract.docx.anonymized.txt
+output\contract.docx.mapping.json
 ```
 
-Карта замен нужна для восстановления текста:
+Restore text with the saved mapping:
 
 ```powershell
-python anonymize.py --restore document.anonymized.txt document.docx.mapping.json
+anonymizer.exe --restore output\contract.anonymized.txt output\contract.txt.mapping.json
 ```
 
-Карта содержит исходные чувствительные данные. Не отправляйте её в LLM и не публикуйте в Git.
+The mapping contains the original sensitive values. Keep it local, do not send it to an LLM, and do not commit it to Git.
 
-## Portable-сборка без Python на целевой машине
+## Detection rules
 
-На машине сборки установите зависимости и выполните:
+Rules are stored in [`patterns.json`](patterns.json). The default set covers email addresses, phone numbers, INN, SNILS, passport numbers, API keys, context-based names, and context-based addresses.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
-```
+Automatic detection is best-effort and does not guarantee that every sensitive value is found. Review the output before sending it to an external service.
 
-Готовый portable-пакет появится в:
+## Limitations
 
-```text
-dist\anonymizer\
-```
-
-Внутри находятся `anonymizer.exe`, `patterns.json` и `run_cmd.bat`. Пользователю не нужно устанавливать Python или добавлять что-либо в PATH.
-
-## Правила обнаружения
-
-Правила находятся в [patterns.json](patterns.json). Сейчас предусмотрены email, телефоны, ИНН, СНИЛС, паспортные номера, API-ключи, контекстные ФИО и адреса.
-
-Автоматическое обнаружение не гарантирует, что найдены все чувствительные данные. Перед передачей результата в LLM проверяйте очищенный файл вручную.
-
-## Ограничения
-
-- Выход для офисных документов и PDF — текстовый файл, исходное оформление не сохраняется.
-- OCR для сканов не используется.
-- PPTX пока не поддерживается.
-- Карта замен пока хранится в обычном JSON и должна защищаться пользователем.
+- DOC/DOCX/RTF/PDF output is plain text; original formatting is not preserved.
+- OCR is disabled. Image-only PDF pages are refused or reported as incomplete.
+- PPTX is not supported yet.
+- Mapping files are currently plain JSON and are not encrypted.
