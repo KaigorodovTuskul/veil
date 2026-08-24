@@ -89,8 +89,15 @@ def ask(candidate: dict[str, Any], text: str) -> str:
         print("Введите 1, 2, 3 или 4.")
 
 
-def anonymize(text: str, rules: list[dict[str, Any]]) -> tuple[str, dict[str, str], int]:
-    candidates = find_candidates(text, rules)
+def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = ()) -> tuple[str, dict[str, str], int]:
+    candidates = find_candidates(text, rules) + list(marked)
+    candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
+    selected: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if any(candidate["start"] < other["end"] and other["start"] < candidate["end"] for other in selected):
+            continue
+        selected.append(candidate)
+    candidates = selected
     replacements: dict[tuple[str, str], str] = {}
     decisions: dict[tuple[str, str], str] = {}
     counters: dict[str, int] = {}
@@ -134,7 +141,7 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path) -> None:
     for warning in extraction.warnings:
         print(f"ВНИМАНИЕ: {warning}", file=sys.stderr)
     validate_json_if_needed(path, text)
-    anonymized, mapping, count = anonymize(text, rules)
+    anonymized, mapping, count = anonymize(text, rules, extraction.marked)
     output_dir.mkdir(parents=True, exist_ok=True)
     result = output_dir / (f"{path.stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{path.name}.anonymized.txt")
     map_path = output_dir / f"{path.name}.mapping.json"

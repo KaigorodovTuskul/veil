@@ -20,6 +20,8 @@ Supported input formats:
 
 PPTX and OCR are not supported yet. Image-only PDFs are rejected with a warning instead of producing a potentially unsafe result.
 
+For RTF files, text highlighted in yellow is treated as an explicit sensitive-data candidate. It is shown during review even when no automatic rule matched it.
+
 ## Portable package
 
 The repository includes a build script for Windows. The target machine does not need Python and no system environment variables are changed.

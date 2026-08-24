@@ -40,5 +40,35 @@
     "name": "API-ключ или токен",
     "type": "SECRET",
     "regex": "(?i)\\b(?:api[_-]?key|token|secret|sk|pk)[=: _-]+[A-Za-z0-9_-]{16,}\\b"
+  },
+  {
+    "name": "City by context",
+    "type": "CITY",
+    "regex": "(?:(?i:г\\.|гор\\.|город|в городе))[ \\t]+(?P<value>[А-ЯЁA-Z][а-яёa-z-]+(?:[ \\t]+[А-ЯЁA-Z][а-яёa-z-]+){0,2})",
+    "value_group": "value"
+  },
+  {
+    "name": "Organization by context",
+    "type": "ORGANIZATION",
+    "regex": "(?:(?i:организация|компания|банк|заказчик|исполнитель|поставщик|работодатель))[ \\t]*[:№-]?[ \\t]*(?P<value>[А-ЯЁA-Z][а-яёa-z-]+(?:[ \\t]+[А-ЯЁA-Z][а-яёa-z-]+){0,4})",
+    "value_group": "value"
+  },
+  {
+    "name": "Organization legal form",
+    "type": "ORGANIZATION",
+    "regex": "(?P<value>(?:ООО|АО|ПАО|ОАО|ЗАО|ИП|АКБ|LLC|LTD|INC)[ \\t]+[«\"']?[А-ЯЁA-Z][а-яёa-zA-Z-]*(?:[ \\t]+[А-ЯЁA-Z][а-яёa-zA-Z-]*){0,4})",
+    "value_group": "value"
+  },
+  {
+    "name": "Address abbreviation",
+    "type": "ADDRESS",
+    "regex": "(?P<value>(?:(?i:г\\.|гор\\.|ул\\.|улица|пр-т|проспект|пер\\.|переулок|наб\\.|набережная|ш\\.|площадь|пл\\.))[ \\t]*[^\\n;]{5,120})",
+    "value_group": "value"
+  },
+  {
+    "name": "Person by role",
+    "type": "PERSON",
+    "regex": "(?:(?i:г-н|г-жа|господин|госпожа|гражданин|сотрудник|работник|представитель|заявитель|директор|начальник))[ \\t]+(?P<value>[А-ЯЁA-Z][а-яёa-z-]+(?:[ \\t]+[А-ЯЁA-Z][а-яёa-z-]+){1,2})",
+    "value_group": "value"
   }
 ]

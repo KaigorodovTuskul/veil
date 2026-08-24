@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree
 
 
@@ -17,6 +19,7 @@ class ExtractionError(Exception):
 class Extraction:
     text: str
     warnings: tuple[str, ...] = ()
+    marked: tuple[dict[str, Any], ...] = ()
 
 
 def read_text(path: Path) -> tuple[str, str]:
@@ -89,7 +92,164 @@ def extract_rtf(path: Path) -> Extraction:
     text = rtf_to_text(raw)
     if not text.strip():
         raise ExtractionError("RTF не содержит извлекаемого текста")
-    return Extraction(text=text)
+    return Extraction(text=text, marked=_rtf_highlights(raw, text))
+
+
+def _rtf_highlights(raw: str, text: str) -> tuple[dict[str, Any], ...]:
+    parsed_text, spans = _rtf_to_text_with_highlights(raw)
+    if parsed_text != text:
+        return ()
+
+    result: list[dict[str, Any]] = []
+    for start, end in spans:
+        value = text[start:end]
+        if not value.strip():
+            continue
+        result.append({
+            "start": start,
+            "end": end,
+            "value": value,
+            "type": _guess_marked_type(value, text, start),
+            "name": "RTF highlighted text",
+            "priority": -1,
+        })
+    return tuple(result)
+
+
+def _rtf_to_text_with_highlights(raw: str) -> tuple[str, list[tuple[int, int]]]:
+    from striprtf.striprtf import (
+        FONTTABLE,
+        HYPERLINKS,
+        PATTERN,
+        charset_map,
+        destinations,
+        font_table_group,
+        remove_pict_groups,
+        specialchars,
+    )
+
+    raw = remove_pict_groups(raw)
+    raw = re.sub(HYPERLINKS, r"\1(\2)", raw)
+    fonttbl = {
+        font_id: {"charset": fcharset, "encoding": charset_map.get(int(fcharset), "cp1252")}
+        for font_id, fcharset, _ in FONTTABLE.findall(font_table_group(raw))
+    }
+    stack: list[tuple[int, bool, bool, int]] = []
+    ucskip = 1
+    curskip = 0
+    ignorable = False
+    suppress_output = False
+    highlight = 0
+    current_font: str | None = None
+    default_font: str | None = None
+    depth = 0
+    in_document = False
+    hexes: str | None = None
+    chunks: list[tuple[str, bool]] = []
+
+    def emit(value: str) -> None:
+        if value and not ignorable and not suppress_output:
+            chunks.append((value, highlight == 7))
+
+    def flush_hexes() -> None:
+        nonlocal hexes
+        if hexes:
+            encoding = fonttbl.get(current_font, {}).get("encoding", "cp1251")
+            emit(bytes.fromhex(hexes).decode(encoding, errors="replace"))
+            hexes = None
+
+    for match in PATTERN.finditer(raw):
+        word, arg, hex_value, char, brace, tchar = match.groups()
+        if hexes and not hex_value:
+            flush_hexes()
+        if brace:
+            curskip = 0
+            if brace == "{":
+                depth += 1
+                in_document = True
+                stack.append((ucskip, ignorable, suppress_output, highlight))
+            else:
+                depth -= 1
+                if stack:
+                    ucskip, ignorable, suppress_output, highlight = stack.pop()
+                else:
+                    ignorable = True
+                    ucskip = 0
+                if in_document and depth <= 0:
+                    break
+        elif char:
+            curskip = 0
+            if char in specialchars and not ignorable:
+                emit(specialchars[char])
+        elif word:
+            curskip = 0
+            if word in destinations:
+                ignorable = True
+            elif word == "ansicpg":
+                pass
+            elif ignorable or suppress_output:
+                pass
+            elif word == "fonttbl":
+                suppress_output = True
+            elif word == "colortbl":
+                suppress_output = True
+            elif word == "deff":
+                default_font = arg
+            elif word == "f":
+                current_font = arg
+            elif word == "highlight":
+                highlight = int(arg or 0)
+            elif word == "uc":
+                ucskip = int(arg or 1)
+            elif word == "u":
+                value = int(arg or 0)
+                if value < 0:
+                    value += 0x10000
+                emit(chr(value))
+                curskip = ucskip
+            elif word in specialchars:
+                emit(specialchars[word])
+        elif hex_value:
+            if curskip > 0:
+                curskip -= 1
+            elif not ignorable:
+                hexes = (hexes or "") + hex_value
+        elif tchar:
+            if curskip > 0:
+                curskip -= 1
+            else:
+                emit(tchar)
+    flush_hexes()
+
+    text = "".join(value for value, _ in chunks)
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    active_start: int | None = None
+    for value, marked in chunks:
+        if marked and active_start is None:
+            active_start = offset
+        if not marked and active_start is not None:
+            spans.append((active_start, offset))
+            active_start = None
+        offset += len(value)
+    if active_start is not None:
+        spans.append((active_start, offset))
+    return text, spans
+
+
+def _guess_marked_type(value: str, text: str, start: int) -> str:
+    before = text[max(0, start - 80) : start]
+    if re.search(r"(?i)(?:г\.|гор\.|город|обл\.|край|р-н)", before):
+        return "CITY"
+    if re.search(r"(?i)(?:адрес|ул\.|улиц|дом|д\.|квартир|кв\.)", before):
+        return "ADDRESS"
+    if re.search(r"(?i)(?:ООО|АО|ПАО|ОАО|ЗАО|ИП|АКБ|банк|компани|организаци|университет|министерств|администраци|фонд)", value):
+        return "ORGANIZATION"
+    if re.search(r"(?i)(?:\b(?:в|из|к|по|на|под|около)\s+)$", before):
+        return "CITY"
+    if len(re.findall(r"[А-ЯЁA-Z][а-яёa-z-]+", value)) >= 2:
+        return "PERSON"
+    return "SENSITIVE"
 
 
 def extract_pdf(path: Path) -> Extraction:
