@@ -142,5 +142,17 @@
     "type": "PERSON",
     "regex": "(?P<value>[А-ЯЁ][А-ЯЁа-яё-]{2,}(?i:ова|ева|ёва|ина|ына|ская|цкая|енко|ов|ев|ёв|ин|ын|ский|цкий)[ \\t]+[А-ЯЁ]\\.[ \\t]*[А-ЯЁ]\\.)",
     "value_group": "value"
+  },
+  {
+    "name": "Person initials and surname",
+    "type": "PERSON",
+    "regex": "(?<![\\w-])(?P<value>[А-ЯЁA-Z]\\.[ \\t]*[А-ЯЁA-Z]\\.[ \\t]+[А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{2,})(?![\\w-])",
+    "value_group": "value"
+  },
+  {
+    "name": "Foreign organization after company context",
+    "type": "ORGANIZATION",
+    "regex": "(?i:\\bкомпани\\w*\\b)[ \\t]+(?P<value>[A-Z][A-Za-z0-9&.-]*(?:[ \\t]+[A-Z][A-Za-z0-9&.-]*){0,4})(?![\\w-])",
+    "value_group": "value"
   }
 ]

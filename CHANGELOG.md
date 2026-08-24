@@ -13,5 +13,7 @@
 - Output filenames now preserve safe source parts and remove detected sensitive fragments; removed values remain only in private mappings.
 - Expanded detection for names, initials, inflected names, cities, regions, countries, organizations, addresses, and email punctuation.
 - Preserved RTF structure while replacing text.
+- Fixed RTF Unicode fallback characters that could remain after a replacement.
+- Added detection for initials-before-surname patterns and foreign company names after explicit company context.
 - Removed embedded RTF pictures and drawing objects from anonymized output.
 - Added portable Windows build documentation and CI configuration.

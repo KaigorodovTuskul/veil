@@ -219,7 +219,12 @@ def _rtf_text_chunks(raw: str) -> tuple[str, list[tuple[str, bool, int, int]]]:
                 value = int(arg or 0)
                 if value < 0:
                     value += 0x10000
-                emit(chr(value), match.start(), match.end())
+                raw_end = match.end()
+                if raw.startswith("\\'", raw_end):
+                    raw_end += 4
+                elif raw_end < len(raw) and raw[raw_end] not in "{}\\":
+                    raw_end += 1
+                emit(chr(value), match.start(), raw_end)
                 curskip = ucskip
             elif word in specialchars:
                 emit(specialchars[word], match.start(), match.end())

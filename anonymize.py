@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from extractors import ExtractionError, extract, read_text as read_extracted_text, replace_rtf, validate_json_if_needed
+from extractors import ExtractionError, _rtf_text_chunks, extract, read_text as read_extracted_text, replace_rtf, validate_json_if_needed
 from i18n import LANGUAGES, entity_label, language, set_language, tr
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
@@ -227,6 +227,10 @@ def self_test() -> None:
     assert filename_mapping == {"{{FILENAME_ORGANIZATION_1}}": "АКБ Пупкинбанк"}
     safe_filename = re.sub(r"[ \t]{2,}", " ", filename_result.replace("{{FILENAME_ORGANIZATION_1}}", "")).strip(" ._-\t")
     assert safe_filename == "1011-ПЛ"
+    assert {candidate["value"] for candidate in find_candidates("С.А. Миллер; компании PricewaterhouseCoopers", production_rules)} == {"С.А. Миллер", "PricewaterhouseCoopers"}
+    unicode_rtf = r"{\rtf1\ansi\u1040?\u1050?}"
+    assert _rtf_text_chunks(unicode_rtf)[0] == "АК"
+    assert replace_rtf(unicode_rtf, "АК", [(0, 2, "{{PERSON_1}}")]) == r"{\rtf1\ansi\{\{PERSON_1\}\}}"
     sample_rtf = replace_rtf(r"{\rtf1\ansi Test\par}", "Test\n", [(0, 4, "{{PERSON_1}}")])
     assert sample_rtf == r"{\rtf1\ansi \{\{PERSON_1\}\}\par}"
     print(tr("self_test"))
