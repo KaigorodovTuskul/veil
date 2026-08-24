@@ -11,10 +11,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from extractors import ExtractionError, extract, validate_json_if_needed
+from extractors import ExtractionError, extract, read_text as read_extracted_text, replace_rtf, validate_json_if_needed
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
-TEXT_FORMATS = {".txt", ".json", ".csv"}
+TEXT_FORMATS = {".txt", ".json", ".csv", ".rtf"}
 SCRIPT_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 
 
@@ -89,7 +89,7 @@ def ask(candidate: dict[str, Any], text: str) -> str:
         print("Введите 1, 2, 3 или 4.")
 
 
-def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = ()) -> tuple[str, dict[str, str], int]:
+def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = ()) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
     candidates = find_candidates(text, rules) + list(marked)
     candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
     selected: list[dict[str, Any]] = []
@@ -120,7 +120,7 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
 
     for start, end, replacement in reversed(changes):
         text = text[:start] + replacement + text[end:]
-    return text, {token: value for (_, value), token in replacements.items()}, len(changes)
+    return text, {token: value for (_, value), token in replacements.items()}, len(changes), changes
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:
@@ -141,11 +141,15 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path) -> None:
     for warning in extraction.warnings:
         print(f"ВНИМАНИЕ: {warning}", file=sys.stderr)
     validate_json_if_needed(path, text)
-    anonymized, mapping, count = anonymize(text, rules, extraction.marked)
+    anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked)
     output_dir.mkdir(parents=True, exist_ok=True)
     result = output_dir / (f"{path.stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{path.name}.anonymized.txt")
     map_path = output_dir / f"{path.name}.mapping.json"
-    write_text(result, anonymized, encoding)
+    if path.suffix.lower() == ".rtf":
+        raw, rtf_encoding = read_extracted_text(path)
+        write_text(result, replace_rtf(raw, text, changes), rtf_encoding)
+    else:
+        write_text(result, anonymized, encoding)
     map_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"\nГотово: заменено {count}, найдено всего {len(find_candidates(text, rules))}")
     print(f"Файл: {result}")
@@ -155,12 +159,17 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path) -> None:
 def restore_file(path: Path, map_path: Path) -> None:
     text, encoding = read_text(path)
     mapping = json.loads(map_path.read_text(encoding="utf-8"))
+    if path.suffix.lower() == ".rtf":
+        mapping = {
+            token.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}"): value
+            for token, value in mapping.items()
+        }
     result = output_path(path, ".restored")
     write_text(result, restore(text, mapping), encoding)
     print(f"Восстановлено: {result}")
 
 
-def anonymize_with_answers(text: str, rules: list[dict[str, Any]], answers: list[str]) -> tuple[str, dict[str, str], int]:
+def anonymize_with_answers(text: str, rules: list[dict[str, Any]], answers: list[str]) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
     iterator = iter(answers)
     original_input = builtins.input
     try:
@@ -176,7 +185,7 @@ def self_test() -> None:
         {"name": "ФИО", "type": "PERSON", "regex": r"ФИО:\s*(?P<value>[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+)", "value_group": "value"},
     ]
     source = "ФИО: Иванов Иван, email ivan@example.com; ещё раз ivan@example.com"
-    result, mapping, count = anonymize_with_answers(source, rules, ["3", "1"])
+    result, mapping, count, _ = anonymize_with_answers(source, rules, ["3", "1"])
     assert result == "ФИО: {{PERSON_1}}, email {{EMAIL_1}}; ещё раз {{EMAIL_1}}"
     assert mapping == {"{{PERSON_1}}": "Иванов Иван", "{{EMAIL_1}}": "ivan@example.com"}
     assert count == 3

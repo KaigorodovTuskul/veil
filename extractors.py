@@ -92,7 +92,10 @@ def extract_rtf(path: Path) -> Extraction:
     text = rtf_to_text(raw)
     if not text.strip():
         raise ExtractionError("RTF не содержит извлекаемого текста")
-    return Extraction(text=text, marked=_rtf_highlights(raw, text))
+    warnings = ()
+    if not re.search(r"\\(?:highlight|chcbpat)\\d+", raw, re.IGNORECASE):
+        warnings = ("RTF не содержит inline-маркеров жёлтой подсветки; выделения в редакторе могут быть сохранены только как стиль.",)
+    return Extraction(text=text, warnings=warnings, marked=_rtf_highlights(raw, text))
 
 
 def _rtf_highlights(raw: str, text: str) -> tuple[dict[str, Any], ...]:
@@ -117,6 +120,23 @@ def _rtf_highlights(raw: str, text: str) -> tuple[dict[str, Any], ...]:
 
 
 def _rtf_to_text_with_highlights(raw: str) -> tuple[str, list[tuple[int, int]]]:
+    text, chunks = _rtf_text_chunks(raw)
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    active_start: int | None = None
+    for value, marked, _, _ in chunks:
+        if marked and active_start is None:
+            active_start = offset
+        if not marked and active_start is not None:
+            spans.append((active_start, offset))
+            active_start = None
+        offset += len(value)
+    if active_start is not None:
+        spans.append((active_start, offset))
+    return text, spans
+
+
+def _rtf_text_chunks(raw: str) -> tuple[str, list[tuple[str, bool, int, int]]]:
     from striprtf.striprtf import (
         FONTTABLE,
         HYPERLINKS,
@@ -144,24 +164,14 @@ def _rtf_to_text_with_highlights(raw: str) -> tuple[str, list[tuple[int, int]]]:
     default_font: str | None = None
     depth = 0
     in_document = False
-    hexes: str | None = None
-    chunks: list[tuple[str, bool]] = []
+    chunks: list[tuple[str, bool, int, int]] = []
 
-    def emit(value: str) -> None:
+    def emit(value: str, raw_start: int, raw_end: int) -> None:
         if value and not ignorable and not suppress_output:
-            chunks.append((value, highlight == 7))
-
-    def flush_hexes() -> None:
-        nonlocal hexes
-        if hexes:
-            encoding = fonttbl.get(current_font, {}).get("encoding", "cp1251")
-            emit(bytes.fromhex(hexes).decode(encoding, errors="replace"))
-            hexes = None
+            chunks.append((value, highlight == 7, raw_start, raw_end))
 
     for match in PATTERN.finditer(raw):
         word, arg, hex_value, char, brace, tchar = match.groups()
-        if hexes and not hex_value:
-            flush_hexes()
         if brace:
             curskip = 0
             if brace == "{":
@@ -180,7 +190,7 @@ def _rtf_to_text_with_highlights(raw: str) -> tuple[str, list[tuple[int, int]]]:
         elif char:
             curskip = 0
             if char in specialchars and not ignorable:
-                emit(specialchars[char])
+                emit(specialchars[char], match.start(), match.end())
         elif word:
             curskip = 0
             if word in destinations:
@@ -205,36 +215,43 @@ def _rtf_to_text_with_highlights(raw: str) -> tuple[str, list[tuple[int, int]]]:
                 value = int(arg or 0)
                 if value < 0:
                     value += 0x10000
-                emit(chr(value))
+                emit(chr(value), match.start(), match.end())
                 curskip = ucskip
             elif word in specialchars:
-                emit(specialchars[word])
+                emit(specialchars[word], match.start(), match.end())
         elif hex_value:
             if curskip > 0:
                 curskip -= 1
             elif not ignorable:
-                hexes = (hexes or "") + hex_value
+                encoding = fonttbl.get(current_font, {}).get("encoding", "cp1251")
+                emit(bytes.fromhex(hex_value).decode(encoding, errors="replace"), match.start(), match.end())
         elif tchar:
             if curskip > 0:
                 curskip -= 1
             else:
-                emit(tchar)
-    flush_hexes()
+                emit(tchar, match.start(), match.end())
 
-    text = "".join(value for value, _ in chunks)
-    spans: list[tuple[int, int]] = []
-    offset = 0
-    active_start: int | None = None
-    for value, marked in chunks:
-        if marked and active_start is None:
-            active_start = offset
-        if not marked and active_start is not None:
-            spans.append((active_start, offset))
-            active_start = None
-        offset += len(value)
-    if active_start is not None:
-        spans.append((active_start, offset))
-    return text, spans
+    text = "".join(value for value, _, _, _ in chunks)
+    return text, chunks
+
+
+def replace_rtf(raw: str, source_text: str, changes: list[tuple[int, int, str]]) -> str:
+    parsed_text, chunks = _rtf_text_chunks(raw)
+    if parsed_text != source_text:
+        raise ExtractionError("Не удалось сопоставить текст RTF с исходным форматированием")
+    if not changes:
+        return raw
+    if any(start < 0 or end > len(chunks) or start >= end for start, end, _ in changes):
+        raise ExtractionError("Некорректные позиции замены в RTF")
+    patches: list[tuple[int, int, str]] = []
+    for start, end, replacement in changes:
+        raw_start = chunks[start][2]
+        raw_end = chunks[end - 1][3]
+        escaped = replacement.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
+        patches.append((raw_start, raw_end, escaped))
+    for raw_start, raw_end, replacement in sorted(patches, reverse=True):
+        raw = raw[:raw_start] + replacement + raw[raw_end:]
+    return raw
 
 
 def _guess_marked_type(value: str, text: str, start: int) -> str:
