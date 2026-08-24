@@ -229,9 +229,15 @@ def self_test() -> None:
     assert safe_filename == "1011-ПЛ"
     assert {candidate["value"] for candidate in find_candidates("С.А. Миллер; компании PricewaterhouseCoopers", production_rules)} == {"С.А. Миллер", "PricewaterhouseCoopers"}
     assert {candidate["value"] for candidate in find_candidates("Банк России и политика Банка России", production_rules)} == {"России"}
+    assert {candidate["value"] for candidate in find_candidates("ЯКУТСК; Якутске; Республика Саха (Якутия)", production_rules)} == {"ЯКУТСК", "Якутске", "Республика Саха (Якутия)"}
     unicode_rtf = r"{\rtf1\ansi\u1040?\u1050?}"
     assert _rtf_text_chunks(unicode_rtf)[0] == "АК"
     assert replace_rtf(unicode_rtf, "АК", [(0, 2, "{{PERSON_1}}")]) == r"{\rtf1\ansi\{\{PERSON_1\}\}}"
+    footer_rtf = r"{\rtf1\ansi{\footerf Footer Company}\par Main}"
+    footer_text = _rtf_text_chunks(footer_rtf)[0]
+    assert "Footer Company" in footer_text
+    footer_start = footer_text.index("Company")
+    assert "Footer" in replace_rtf(footer_rtf, footer_text, [(footer_start, footer_start + 7, "{{ORGANIZATION_1}}")])
     sample_rtf = replace_rtf(r"{\rtf1\ansi Test\par}", "Test\n", [(0, 4, "{{PERSON_1}}")])
     assert sample_rtf == r"{\rtf1\ansi \{\{PERSON_1\}\}\par}"
     print(tr("self_test"))

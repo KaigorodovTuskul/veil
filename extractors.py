@@ -86,12 +86,11 @@ def extract_doc(path: Path) -> Extraction:
 
 
 def extract_rtf(path: Path) -> Extraction:
+    raw, _ = read_text(path)
     try:
-        from striprtf.striprtf import rtf_to_text
+        text, _ = _rtf_text_chunks(raw)
     except ImportError as error:
         raise ExtractionError(tr("rtf_dependency")) from error
-    raw, _ = read_text(path)
-    text = rtf_to_text(raw)
     if not text.strip():
         raise ExtractionError(tr("rtf_no_text"))
     warning_list: list[str] = []
@@ -169,6 +168,7 @@ def _rtf_text_chunks(raw: str) -> tuple[str, list[tuple[str, bool, int, int]]]:
     depth = 0
     in_document = False
     chunks: list[tuple[str, bool, int, int]] = []
+    visible_destinations = {"header", "headerf", "headerl", "headerr", "footer", "footerf", "footerl", "footerr"}
 
     def emit(value: str, raw_start: int, raw_end: int) -> None:
         if value and not ignorable and not suppress_output:
@@ -197,7 +197,7 @@ def _rtf_text_chunks(raw: str) -> tuple[str, list[tuple[str, bool, int, int]]]:
                 emit(specialchars[char], match.start(), match.end())
         elif word:
             curskip = 0
-            if word in destinations:
+            if word in destinations and word not in visible_destinations:
                 ignorable = True
             elif word == "ansicpg":
                 pass
