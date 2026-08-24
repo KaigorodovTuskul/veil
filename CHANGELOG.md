@@ -15,5 +15,6 @@
 - Preserved RTF structure while replacing text.
 - Fixed RTF Unicode fallback characters that could remain after a replacement.
 - Added detection for initials-before-surname patterns and foreign company names after explicit company context.
+- Added country detection inside ordinary sentences, including inflected forms such as `России`.
 - Removed embedded RTF pictures and drawing objects from anonymized output.
 - Added portable Windows build documentation and CI configuration.
