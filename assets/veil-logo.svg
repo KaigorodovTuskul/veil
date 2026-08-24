@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Veil logo</title>
+  <desc id="desc">A dark shield with a light veil across it</desc>
+  <defs>
+    <linearGradient id="shield" x1="96" y1="64" x2="416" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0B1220"/>
+  <path d="M256 62 408 116v116c0 99-61 165-152 218-91-53-152-119-152-218V116L256 62Z" fill="url(#shield)"/>
+  <path d="M256 104 365 143v89c0 70-39 120-109 164-70-44-109-94-109-164v-89l109-39Z" fill="#0B1220" opacity=".96"/>
+  <path d="M141 238c38-42 76-63 115-63s77 21 115 63c-38 42-76 63-115 63s-77-21-115-63Z" fill="#F8FAFC"/>
+  <path d="M256 175c-25 0-45 28-45 63s20 63 45 63 45-28 45-63-20-63-45-63Z" fill="#0B1220"/>
+  <circle cx="256" cy="238" r="17" fill="#67E8F9"/>
+  <path d="M157 346c31 30 64 51 99 72 35-21 68-42 99-72" fill="none" stroke="#F8FAFC" stroke-linecap="round" stroke-width="18" opacity=".9"/>
+</svg>

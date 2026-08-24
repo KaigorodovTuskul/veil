@@ -1,8 +1,16 @@
 # Veil
 
+<p align="center">
+  <img src="assets/veil-logo.svg" alt="Veil logo" width="112">
+</p>
+
+<p align="center"><strong>Local. Portable. Cautious by default.</strong></p>
+
 Lightweight, local, interactive document anonymizer for Windows. Veil replaces names, surnames, organizations, locations, addresses, contacts, and other PII before a document is sent to an LLM or another external service.
 
 There is no GUI, cloud service, Node.js, or local LLM. The default workflow is a folder and one batch file.
+
+![Veil workflow preview](assets/veil-demo.svg)
 
 ## Fastest use: portable release
 

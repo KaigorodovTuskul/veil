@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Veil anonymization workflow preview</title>
+  <desc id="desc">A terminal command sends files from input to neutral output filenames with anonymized placeholders</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="680" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#020617" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="680" rx="28" fill="url(#bg)"/>
+  <circle cx="54" cy="48" r="9" fill="#FB7185"/>
+  <circle cx="84" cy="48" r="9" fill="#FBBF24"/>
+  <circle cx="114" cy="48" r="9" fill="#34D399"/>
+  <text x="150" y="57" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="22">Veil — local anonymization</text>
+  <rect x="44" y="96" width="1112" height="112" rx="18" fill="#020617" stroke="#1E293B"/>
+  <text x="72" y="138" fill="#67E8F9" font-family="Consolas, monospace" font-size="22">C:\veil&gt;</text>
+  <text x="232" y="138" fill="#F8FAFC" font-family="Consolas, monospace" font-size="22">run_cmd.bat --auto --lang en</text>
+  <text x="72" y="178" fill="#64748B" font-family="Consolas, monospace" font-size="18">Processing 2 file(s) into output</text>
+  <g filter="url(#shadow)">
+    <rect x="44" y="248" width="500" height="300" rx="22" fill="#F8FAFC"/>
+    <rect x="656" y="248" width="500" height="300" rx="22" fill="#F8FAFC"/>
+  </g>
+  <text x="78" y="292" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="2">INPUT</text>
+  <text x="78" y="345" fill="#0F172A" font-family="Consolas, monospace" font-size="20">Ivanov_Nikolay_contract.txt</text>
+  <text x="78" y="383" fill="#0F172A" font-family="Consolas, monospace" font-size="20">Moscow_region.csv</text>
+  <text x="78" y="446" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="18">names · cities · organizations</text>
+  <path d="M560 398h80" fill="none" stroke="#38BDF8" stroke-linecap="round" stroke-width="7"/>
+  <path d="m620 376 26 22-26 22" fill="none" stroke="#38BDF8" stroke-linecap="round" stroke-linejoin="round" stroke-width="7"/>
+  <text x="690" y="292" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="2">OUTPUT</text>
+  <text x="690" y="345" fill="#0F172A" font-family="Consolas, monospace" font-size="20">document_001.anonymized.txt</text>
+  <text x="690" y="383" fill="#0F172A" font-family="Consolas, monospace" font-size="20">document_002.anonymized.csv</text>
+  <rect x="690" y="417" width="176" height="38" rx="10" fill="#DBEAFE"/>
+  <text x="708" y="443" fill="#1D4ED8" font-family="Consolas, monospace" font-size="18">{{PERSON_1}}</text>
+  <rect x="878" y="417" width="148" height="38" rx="10" fill="#CCFBF1"/>
+  <text x="896" y="443" fill="#0F766E" font-family="Consolas, monospace" font-size="18">{{CITY_1}}</text>
+  <text x="690" y="500" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="18">mapping stays private</text>
+  <text x="600" y="630" text-anchor="middle" fill="#64748B" font-family="Segoe UI, Arial, sans-serif" font-size="18">local · portable · review before sending to an LLM</text>
+</svg>
