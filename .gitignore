@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+.pytest_cache/
+
+build/
+dist/
+*.spec
+*.exe
+
+*.anonymized.*
+*.mapping.json
+*.restored.*
+
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+
+# Local test/helper files
+check.bat

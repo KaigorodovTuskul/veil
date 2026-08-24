@@ -1,0 +1,4 @@
+pypdf
+striprtf
+legacy-doc
+pyinstaller
