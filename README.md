@@ -6,13 +6,13 @@
 
 <p align="center"><strong>Local. Portable. Cautious by default.</strong></p>
 
-Lightweight, local, interactive document anonymizer for Windows. Veil replaces names, surnames, organizations, locations, addresses, contacts, and other PII before a document is sent to an LLM or another external service.
+Lightweight, local, interactive document anonymizer for Windows, Linux, and macOS. Veil replaces names, surnames, organizations, locations, addresses, contacts, and other PII before a document is sent to an LLM or another external service.
 
-There is no GUI, cloud service, Node.js, or local LLM. The default workflow is a folder and one batch file.
+There is no GUI, cloud service, Node.js, or local LLM. The core is Python; the default workflow is a folder and one launcher command.
 
 ![Veil workflow preview](assets/veil-demo.svg)
 
-## Fastest use: portable release
+## Windows: fastest use with the portable release
 
 1. Download `Veil-windows-x64.zip` from the [latest GitHub Release](https://github.com/KaigorodovTuskul/veil/releases/latest).
 2. Extract it to a local folder.
@@ -22,19 +22,68 @@ There is no GUI, cloud service, Node.js, or local LLM. The default workflow is a
 
 The target Windows machine does not need Python or modified system environment variables.
 
-The default language is Russian. Use one portable build with a language flag:
+## Linux and macOS: run from source
+
+Requirements: Python 3.12 or newer. No system-wide installation is required.
+
+```bash
+git clone https://github.com/KaigorodovTuskul/veil.git
+cd veil
+python3 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python anonymize.py --self-test
+```
+
+Put documents into `input`, then run either interactive or automatic mode:
+
+```bash
+./.venv/bin/python anonymize.py --lang en
+./.venv/bin/python anonymize.py --auto --lang en
+```
+
+If `uv` is already installed, the shorter setup is:
+
+```bash
+uv sync --locked
+uv run python anonymize.py --self-test
+uv run python anonymize.py --auto --lang en
+```
+
+The same Python commands work on Windows when a portable EXE is not used. On Linux and macOS, the repository currently provides source-based execution rather than a prebuilt archive.
+
+## Interface languages
+
+The default language is Russian. One build supports all available languages:
+
+| Code | Language | Example |
+| --- | --- | --- |
+| `ru` | Russian | `--lang ru` |
+| `en` | English | `--lang en` |
+| `zh` | Simplified Chinese | `--lang zh` |
+
+Windows batch launcher:
 
 ```powershell
 run_cmd.bat --lang en
 run_cmd.bat --lang zh
 ```
 
+Linux/macOS:
+
+```bash
+./.venv/bin/python anonymize.py --lang zh
+```
+
 You can also set `VEIL_LANG=ru`, `VEIL_LANG=en`, or `VEIL_LANG=zh`. An explicit `--lang` value takes priority.
 
-For unattended replacement, use auto mode:
+For unattended replacement, use auto mode on any platform:
 
 ```powershell
+# Windows
 run_cmd.bat --auto --lang en
+
+# Linux/macOS
+./.venv/bin/python anonymize.py --auto --lang en
 ```
 
 Auto mode replaces every detected value and does not ask per candidate. Review the result manually before external use.
@@ -88,7 +137,7 @@ anonymizer.exe --restore output\document_001.anonymized.txt output\document_001.
 
 The restored file is written next to the anonymized file with a `.restored` suffix. Restoration is intended for text-compatible output; it does not recreate original DOC/DOCX/PDF formatting.
 
-## Build a portable ZIP
+## Build the Windows portable ZIP
 
 Requirements on the build machine: Windows, Python 3.12+, and either `uv` or standard `venv`/`pip`.
 
@@ -103,6 +152,8 @@ Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.
 
 The resulting archive is `dist\Veil-windows-x64.zip`. It contains a self-contained one-folder application with `anonymizer.exe`, `patterns.json`, and `run_cmd.bat`.
 
+Linux and macOS portable builds are not published yet. They can run directly from the virtual environment described above.
+
 ### Fallback: standard Python
 
 ```powershell
@@ -113,7 +164,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
 Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.zip -Force
 ```
 
-## Development checks
+## Development checks on any platform
 
 ```powershell
 uv sync --locked
@@ -122,12 +173,12 @@ uv run python -m py_compile anonymize.py extractors.py i18n.py
 git diff --check
 ```
 
-The same checks run in GitHub Actions on Windows for pushes and pull requests.
+If `uv` is unavailable, use the Python executable from `.venv` instead. The repository's CI currently validates the Windows build; Linux/macOS source execution should be checked locally on the target platform.
 
 ## Repository layout
 
 ```text
-anonymize.py          command-line workflow, auto mode, and restore mode
+anonymize.py          cross-platform CLI, auto mode, and restore mode
 extractors.py         TXT/JSON/CSV/DOC/DOCX/RTF/PDF extraction
 i18n.py               Russian, English, and Simplified Chinese UI
 patterns.json         configurable detection rules
