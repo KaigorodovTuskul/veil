@@ -1,79 +1,32 @@
 # Veil
 
-Veil is a lightweight, local document anonymizer for preparing files before sending their text to an LLM.
+Lightweight, local, interactive document anonymizer for Windows. Veil replaces names, surnames, organizations, locations, addresses, contacts, and other PII before a document is sent to an LLM or another external service.
 
-It has no GUI and no local LLM. The program finds sensitive values with configurable regular-expression rules, asks for confirmation, and writes anonymized results without changing the original files.
+There is no GUI, cloud service, Node.js, or local LLM. The default workflow is a folder and one batch file.
 
-## Quick start
+## Fastest use: portable release
 
-1. Put source files into the `input` folder.
-2. Run `run_cmd.bat`.
-3. Take anonymized files from the `output` folder.
+1. Download `Veil-windows-x64.zip` from the [latest GitHub Release](https://github.com/KaigorodovTuskul/veil/releases/latest).
+2. Extract it to a local folder.
+3. Put source files into `input`.
+4. Run `run_cmd.bat`.
+5. Review files in `output` before sharing them.
+
+The target Windows machine does not need Python or modified system environment variables.
+
+## Input and output
 
 Supported input formats:
 
 - TXT, JSON, CSV
 - DOCX
-- DOC (legacy Word)
+- legacy DOC
 - RTF
-- PDF with an extractable text layer
+- text-based PDF
 
-PPTX and OCR are not supported yet. Image-only PDFs are rejected with a warning instead of producing a potentially unsafe result.
+PPTX and OCR are not included yet. Image-only PDF pages are reported as unsafe/incomplete and are not silently treated as clean text.
 
-For RTF files, text highlighted in yellow is treated as an explicit sensitive-data candidate. It is shown during review even when no automatic rule matched it.
-
-## Portable package
-
-The repository includes a build script for Windows. The target machine does not need Python and no system environment variables are changed.
-
-On the build machine:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
-```
-
-The portable package is created in `dist\anonymizer\` and contains:
-
-```text
-anonymizer.exe
-patterns.json
-run_cmd.bat
-```
-
-Copy that folder to another Windows machine, put files into its `input` folder, and run its `run_cmd.bat`.
-
-## Development mode
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe anonymize.py --self-test
-```
-
-Running `anonymize.py` without arguments uses `input` and `output` next to the script. File paths can also be passed directly for development:
-
-```powershell
-.\.venv\Scripts\python.exe anonymize.py document.docx
-```
-
-## Review actions
-
-For each detected value:
-
-```text
-1 - replace this value
-2 - skip this value
-3 - replace all occurrences of this value
-4 - stop without modifying the source
-```
-
-Repeated values receive the same placeholder, for example `{{PERSON_1}}` or `{{EMAIL_1}}`.
-
-## Output and restoration
-
-Text formats keep their extension:
+Text files keep their format:
 
 ```text
 input\contract.txt
@@ -81,31 +34,90 @@ output\contract.anonymized.txt
 output\contract.txt.mapping.json
 ```
 
-Document formats are converted to cleaned text:
+DOC, DOCX, and PDF are currently extracted to plain text. RTF keeps its RTF structure and formatting while replacing text; embedded RTF pictures and drawing objects are removed from the anonymized copy. The program prints warnings when a file contains unsupported or potentially unsafe content.
+
+## Interactive review
+
+For each detected value, choose:
 
 ```text
-input\contract.docx
-output\contract.docx.anonymized.txt
-output\contract.docx.mapping.json
+1 - replace this occurrence
+2 - skip this occurrence
+3 - replace all occurrences of this value
+4 - stop without modifying the source
 ```
 
-Restore text with the saved mapping:
+Repeated values receive the same placeholder, such as `{{PERSON_1}}` or `{{EMAIL_1}}`.
+
+Rules are editable in [`patterns.json`](patterns.json). Detection is heuristic and best-effort: always inspect the anonymized document manually before sending it outside the machine.
+
+## Restore an anonymized text file
+
+Every processed file gets a mapping file containing the original sensitive values. Keep it private and never send it to an LLM.
 
 ```powershell
 anonymizer.exe --restore output\contract.anonymized.txt output\contract.txt.mapping.json
 ```
 
-The mapping contains the original sensitive values. Keep it local, do not send it to an LLM, and do not commit it to Git.
+The restored file is written next to the anonymized file with a `.restored` suffix. Restoration is intended for text-compatible output; it does not recreate original DOC/DOCX/PDF formatting.
 
-## Detection rules
+## Build a portable ZIP
 
-Rules are stored in [`patterns.json`](patterns.json). The default set covers email addresses, phone numbers, INN, SNILS, passport numbers, API keys, context-based names, and context-based addresses.
+Requirements on the build machine: Windows, Python 3.12+, and either `uv` or standard `venv`/`pip`.
 
-Automatic detection is best-effort and does not guarantee that every sensitive value is found. Review the output before sending it to an external service.
+### Recommended: uv
 
-## Limitations
+```powershell
+uv sync --locked
+uv run python anonymize.py --self-test
+.\build_portable.ps1
+Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.zip -Force
+```
 
-- DOC/DOCX/PDF output is plain text; original formatting is not preserved. RTF output keeps the original RTF structure and formatting while replacing detected text. Embedded RTF pictures and drawing objects are removed from anonymized output.
-- OCR is disabled. Image-only PDF pages are refused or reported as incomplete.
-- PPTX is not supported yet.
-- Mapping files are currently plain JSON and are not encrypted.
+The resulting archive is `dist\Veil-windows-x64.zip`. It contains a self-contained one-folder application with `anonymizer.exe`, `patterns.json`, and `run_cmd.bat`.
+
+### Fallback: standard Python
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe anonymize.py --self-test
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_portable.ps1
+Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.zip -Force
+```
+
+## Development checks
+
+```powershell
+uv sync --locked
+uv run python anonymize.py --self-test
+uv run python -m py_compile anonymize.py extractors.py
+git diff --check
+```
+
+The same checks run in GitHub Actions on Windows for pushes and pull requests.
+
+## Repository layout
+
+```text
+anonymize.py          command-line workflow and restore mode
+extractors.py         TXT/JSON/CSV/DOC/DOCX/RTF/PDF extraction
+patterns.json         configurable detection rules
+run_cmd.bat           folder-mode launcher
+build_portable.ps1    PyInstaller one-folder build
+input/                local source files; ignored by Git
+output/               local results and mappings; ignored by Git
+```
+
+## Security notes
+
+- Mapping files contain the original values and are equivalent to sensitive data.
+- Do not commit real documents, output files, mapping files, or personal data.
+- A successful run is not proof that every PII value was found.
+- Review every anonymized file and the console warnings before external use.
+
+See [`SECURITY.md`](SECURITY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`CHANGELOG.md`](CHANGELOG.md).
+
+## License
+
+No license has been selected yet. Add the license that matches the intended use before treating the repository as a distributable open-source project.

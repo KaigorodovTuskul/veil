@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veil-anonymizer"
+version = "0.1.0"
+description = "A local, interactive document anonymizer for Windows"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "legacy-doc",
+  "pypdf",
+  "striprtf",
+]
+
+[dependency-groups]
+dev = [
+  "pyinstaller",
+]
+
+[tool.uv]
+package = false
