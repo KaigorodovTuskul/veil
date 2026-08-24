@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from extractors import ExtractionError, extract, read_text as read_extracted_text, replace_rtf, validate_json_if_needed
+from i18n import LANGUAGES, entity_label, language, set_language, tr
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
 TEXT_FORMATS = {".txt", ".json", ".csv", ".rtf"}
@@ -31,7 +32,7 @@ def read_text(path: Path) -> tuple[str, str]:
             return data.decode(encoding), encoding
         except UnicodeDecodeError:
             continue
-    raise UnicodeError(f"Не удалось определить кодировку: {path}")
+    raise UnicodeError(tr("encoding_error", value=path))
 
 
 def write_text(path: Path, text: str, encoding: str) -> None:
@@ -79,17 +80,17 @@ def token_for(entity_type: str, counters: dict[str, int]) -> str:
 
 
 def ask(candidate: dict[str, Any], text: str) -> str:
-    print(f"\nНайдено [{candidate['name']}]: {candidate['value']}")
-    print(f"Контекст: {context(text, candidate['start'], candidate['end'])}")
-    print("1 — заменить   2 — пропустить   3 — заменить все такие   4 — выйти")
+    print(f"\n{tr('found', label=entity_label(candidate['type']), value=candidate['value'])}")
+    print(tr("context", value=context(text, candidate["start"], candidate["end"])))
+    print(tr("choices"))
     while True:
         answer = input("> ").strip()
         if answer in {"1", "2", "3", "4"}:
             return answer
-        print("Введите 1, 2, 3 или 4.")
+        print(tr("invalid_choice"))
 
 
-def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = ()) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
+def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
     candidates = find_candidates(text, rules) + list(marked)
     candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
     selected: list[dict[str, Any]] = []
@@ -108,7 +109,7 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
         decision = decisions.get(key)
         token = replacements.get(key)
         if decision is None:
-            decision = ask(candidate, text)
+            decision = "1" if auto else ask(candidate, text)
             if decision == "4":
                 raise KeyboardInterrupt
             decisions[key] = "replace" if decision in {"1", "3"} else "skip"
@@ -133,32 +134,37 @@ def output_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
 
-def process(path: Path, rules: list[dict[str, Any]], output_dir: Path) -> None:
+def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_number: int, auto: bool = False) -> None:
     if path.suffix.lower() not in SUPPORTED:
-        raise ValueError(f"Формат {path.suffix or '<без расширения>'} пока не поддерживается")
+        raise ValueError(tr("unsupported_format", value=path.suffix or "<no extension>"))
     extraction, encoding = extract(path)
     text = extraction.text
     for warning in extraction.warnings:
-        print(f"ВНИМАНИЕ: {warning}", file=sys.stderr)
+        print(tr("warning", value=warning), file=sys.stderr)
     validate_json_if_needed(path, text)
-    anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked)
+    anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked, auto=auto)
     output_dir.mkdir(parents=True, exist_ok=True)
-    result = output_dir / (f"{path.stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{path.name}.anonymized.txt")
-    map_path = output_dir / f"{path.name}.mapping.json"
+    safe_stem = f"document_{file_number:03d}"
+    result = output_dir / (f"{safe_stem}.anonymized{path.suffix}" if path.suffix.lower() in TEXT_FORMATS else f"{safe_stem}{path.suffix}.anonymized.txt")
+    map_path = output_dir / f"{safe_stem}{path.suffix}.mapping.json"
     if path.suffix.lower() == ".rtf":
         raw, rtf_encoding = read_extracted_text(path)
         write_text(result, replace_rtf(raw, text, changes), rtf_encoding)
     else:
         write_text(result, anonymized, encoding)
-    map_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"\nГотово: заменено {count}, найдено всего {len(find_candidates(text, rules))}")
-    print(f"Файл: {result}")
-    print(f"Карта замен: {map_path} — храните её отдельно от очищенного файла")
+    mapping_payload = dict(mapping)
+    mapping_payload["_veil"] = {"original_filename": path.name}
+    map_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"\n{tr('done', replaced=count, found=len(find_candidates(text, rules)))}")
+    print(tr("file", value=result))
+    print(tr("mapping", value=map_path))
+    print(tr("filename_hidden", value=result.name))
 
 
 def restore_file(path: Path, map_path: Path) -> None:
     text, encoding = read_text(path)
     mapping = json.loads(map_path.read_text(encoding="utf-8"))
+    mapping.pop("_veil", None)
     if path.suffix.lower() == ".rtf":
         mapping = {
             token.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}"): value
@@ -166,7 +172,7 @@ def restore_file(path: Path, map_path: Path) -> None:
         }
     result = output_path(path, ".restored")
     write_text(result, restore(text, mapping), encoding)
-    print(f"Восстановлено: {result}")
+    print(tr("restored", value=result))
 
 
 def anonymize_with_answers(text: str, rules: list[dict[str, Any]], answers: list[str]) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
@@ -190,15 +196,30 @@ def self_test() -> None:
     assert mapping == {"{{PERSON_1}}": "Иванов Иван", "{{EMAIL_1}}": "ivan@example.com"}
     assert count == 3
     assert restore(result, mapping) == source
-    print("self-test: OK")
+    auto_result, auto_mapping, auto_count, _ = anonymize(source, rules, auto=True)
+    assert auto_result == result
+    assert auto_mapping == mapping
+    assert auto_count == 3
+    print(tr("self_test"))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Интерактивная замена чувствительных данных")
-    parser.add_argument("files", nargs="*", type=Path, help="TXT, JSON, CSV, DOC, DOCX, RTF или PDF")
-    parser.add_argument("--restore", nargs=2, metavar=("FILE", "MAP"), help="восстановить файл по карте замен")
-    parser.add_argument("--self-test", action="store_true", help="запустить встроенную проверку")
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--lang", choices=LANGUAGES)
+    bootstrap_args, _ = bootstrap.parse_known_args()
+    set_language(bootstrap_args.lang)
+
+    parser = argparse.ArgumentParser(description=tr("description"))
+    parser.add_argument("files", nargs="*", type=Path, help=tr("files_help"))
+    parser.add_argument("--restore", nargs=2, metavar=("FILE", "MAP"), help=tr("restore_help"))
+    parser.add_argument("--self-test", action="store_true", help=tr("self_test_help"))
+    parser.add_argument("--auto", action="store_true", help=tr("auto_help"))
+    parser.add_argument("--lang", choices=LANGUAGES, default=language(), help=tr("lang_help"))
     args = parser.parse_args()
+    set_language(args.lang)
 
     if args.self_test:
         self_test()
@@ -216,18 +237,18 @@ def main() -> int:
         key=lambda path: path.name.lower(),
     )
     if not files:
-        print(f"Input folder is empty: {input_dir}")
-        print("Drop TXT, JSON, CSV, DOC, DOCX, RTF or PDF files there and run again.")
+        print(tr("empty_input", value=input_dir))
+        print(tr("drop_files"))
         return 0
-    print(f"Processing {len(files)} file(s) into {output_dir}")
-    for path in files:
+    print(tr("processing", count=len(files), value=output_dir))
+    for file_number, path in enumerate(files, 1):
         try:
-            process(path, rules, output_dir)
+            process(path, rules, output_dir, file_number, auto=args.auto)
         except KeyboardInterrupt:
-            print("\nОстановлено. Исходный файл не изменён.")
+            print(f"\n{tr('stopped')}")
             return 130
         except (OSError, ValueError, UnicodeError, json.JSONDecodeError, ExtractionError) as error:
-            print(f"Ошибка: {error}", file=sys.stderr)
+            print(tr("error", value=error), file=sys.stderr)
             return 1
     return 0
 

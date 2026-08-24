@@ -27,7 +27,7 @@ jobs:
         run: uv run python anonymize.py --self-test
 
       - name: Compile sources
-        run: uv run python -m py_compile anonymize.py extractors.py
+        run: uv run python -m py_compile anonymize.py extractors.py i18n.py
 
       - name: Build portable package
         shell: powershell

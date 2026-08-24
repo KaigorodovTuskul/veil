@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from i18n import tr
+
 
 class ExtractionError(Exception):
     """The file cannot safely be converted to text."""
@@ -30,7 +32,7 @@ def read_text(path: Path) -> tuple[str, str]:
             return data.decode(encoding), encoding
         except UnicodeDecodeError:
             continue
-    raise UnicodeError(f"Не удалось определить кодировку: {path}")
+    raise UnicodeError(tr("encoding_error", value=path))
 
 
 def _local_name(tag: str) -> str:
@@ -67,7 +69,7 @@ def extract_docx(path: Path) -> Extraction:
     parts.sort(key=lambda item: (item[0] != "word/document.xml", item[0]))
     text = "\n".join(_docx_part_text(data) for _, data in parts)
     if not text.strip():
-        raise ExtractionError("DOCX не содержит извлекаемого текста")
+        raise ExtractionError(tr("docx_no_text"))
     return Extraction(text=text)
 
 
@@ -75,11 +77,11 @@ def extract_doc(path: Path) -> Extraction:
     try:
         from legacy_doc import extract_text
     except ImportError as error:
-        raise ExtractionError("Для DOC нужен пакет legacy-doc: установите requirements.txt") from error
+        raise ExtractionError(tr("doc_dependency")) from error
     result = extract_text(path.read_bytes())
     warnings = tuple(getattr(result, "warnings", ()) or ())
     if not result.text.strip():
-        raise ExtractionError("DOC не содержит извлекаемого текста или зашифрован")
+        raise ExtractionError(tr("doc_no_text"))
     return Extraction(text=result.text, warnings=warnings)
 
 
@@ -87,16 +89,16 @@ def extract_rtf(path: Path) -> Extraction:
     try:
         from striprtf.striprtf import rtf_to_text
     except ImportError as error:
-        raise ExtractionError("Для RTF нужен пакет striprtf: установите requirements.txt") from error
+        raise ExtractionError(tr("rtf_dependency")) from error
     raw, _ = read_text(path)
     text = rtf_to_text(raw)
     if not text.strip():
-        raise ExtractionError("RTF не содержит извлекаемого текста")
+        raise ExtractionError(tr("rtf_no_text"))
     warning_list: list[str] = []
     if not re.search(r"\\(?:highlight|chcbpat)\\d+", raw, re.IGNORECASE):
-        warning_list.append("RTF не содержит inline-маркеров жёлтой подсветки; выделения в редакторе могут быть сохранены только как стиль.")
+        warning_list.append(tr("rtf_no_highlight"))
     if re.search(r"\\(?:shppict|pict|object)\b", raw, re.IGNORECASE):
-        warning_list.append("RTF содержит встроенные рисунки; в anonymized-версии все встроенные рисунки будут удалены.")
+        warning_list.append(tr("rtf_graphics"))
     return Extraction(text=text, warnings=tuple(warning_list), marked=_rtf_highlights(raw, text))
 
 
@@ -240,11 +242,11 @@ def _rtf_text_chunks(raw: str) -> tuple[str, list[tuple[str, bool, int, int]]]:
 def replace_rtf(raw: str, source_text: str, changes: list[tuple[int, int, str]]) -> str:
     parsed_text, chunks = _rtf_text_chunks(raw)
     if parsed_text != source_text:
-        raise ExtractionError("Не удалось сопоставить текст RTF с исходным форматированием")
+        raise ExtractionError(tr("rtf_mapping"))
     if not changes:
         return remove_rtf_graphics(raw)
     if any(start < 0 or end > len(chunks) or start >= end for start, end, _ in changes):
-        raise ExtractionError("Некорректные позиции замены в RTF")
+        raise ExtractionError(tr("rtf_changes"))
     patches: list[tuple[int, int, str]] = []
     for start, end, replacement in changes:
         raw_start = chunks[start][2]
@@ -304,16 +306,16 @@ def extract_pdf(path: Path) -> Extraction:
     try:
         from pypdf import PdfReader
     except ImportError as error:
-        raise ExtractionError("Для PDF нужен пакет pypdf: установите requirements.txt") from error
+        raise ExtractionError(tr("pdf_dependency")) from error
     reader = PdfReader(str(path))
     pages = [(page.extract_text() or "").strip() for page in reader.pages]
     text = "\n\n".join(page for page in pages if page)
     empty_pages = sum(not page for page in pages)
     if not text.strip():
-        raise ExtractionError("PDF похож на скан или содержит только изображения; OCR пока не включён")
+        raise ExtractionError(tr("pdf_scan"))
     warnings = ()
     if empty_pages:
-        warnings = (f"PDF: {empty_pages} страниц без извлекаемого текста; данные на них могут быть изображениями",)
+        warnings = (tr("pdf_empty_pages", count=empty_pages),)
     return Extraction(text=text, warnings=warnings)
 
 
@@ -330,7 +332,7 @@ def extract(path: Path) -> tuple[Extraction, str]:
         return extract_rtf(path), "utf-8"
     if suffix == ".pdf":
         return extract_pdf(path), "utf-8"
-    raise ExtractionError(f"Формат {suffix or '<без расширения>'} пока не поддерживается")
+    raise ExtractionError(tr("unsupported_format", value=suffix or "<no extension>"))
 
 
 def validate_json_if_needed(path: Path, text: str) -> None:
