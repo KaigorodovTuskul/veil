@@ -109,9 +109,9 @@ PPTX and OCR are not included yet. Image-only PDF pages are reported as unsafe/i
 Output filenames preserve non-sensitive parts and replace detected sensitive fragments:
 
 ```text
-input\818-ПЛ Положение о фонде акционирования работников АКБ Example_Organization ОАО.rtf
-output\818-ПЛ Положение о фонде акционирования работников.anonymized.rtf
-output\818-ПЛ Положение о фонде акционирования работников.rtf.mapping.json
+input\policy-818 Example Organization LLC.rtf
+output\policy-818.anonymized.rtf
+output\policy-818.rtf.mapping.json
 ```
 
 Detected sensitive fragments are removed from the output filename; the remaining safe parts are preserved. If no sensitive fragment is detected, the original filename stem is preserved. The original full filename and the removed fragment are stored in the private mapping file. Review mapping files before sharing them.
