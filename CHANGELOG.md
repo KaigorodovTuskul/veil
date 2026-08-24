@@ -5,6 +5,8 @@
 - Made regex matching case-insensitive for uppercase documents.
 - Added normalization for invisible spaces and dash variants.
 - Added organization suffix detection for joined and spaced names such as `Пупкинбанк` and `Пуп кинбанк`.
+- Removed broad city-by-preposition matching and added context stop words to reduce false positives.
+- Fixed RTF replacement offsets and batch processing so one broken file does not stop the remaining files.
 - Documented launcher arguments in `run_cmd.bat`.
 - Added `--auto` mode for unattended replacement.
 - Added Russian, English, and Simplified Chinese UI via `--lang` or `VEIL_LANG`.

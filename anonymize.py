@@ -16,8 +16,14 @@ from i18n import LANGUAGES, entity_label, language, set_language, tr
 
 SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
 TEXT_FORMATS = {".txt", ".json", ".csv", ".rtf"}
-MATCH_FLAGS = re.IGNORECASE
+MATCH_FLAGS = 0
 SCRIPT_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+PERSON_STOP_WORDS = {
+    "банк", "банка", "департамент", "департамента", "договор", "комиссия", "комиссии",
+    "председатель", "председателя", "правление", "правления", "россия", "россии",
+    "российская", "российской", "федерация", "федерации", "республика", "республики",
+}
+ORGANIZATION_STOP_WORDS = {"группа", "группы", "договор", "департамент", "департамента", "комиссия", "комиссии"}
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -48,7 +54,11 @@ def find_candidates(text: str, rules: list[dict[str, Any]]) -> list[dict[str, An
             group = rule.get("value_group")
             start, end = match.span(group or 0)
             value = text[start:end]
-            if value.strip():
+            words = {word.casefold() for word in re.findall(r"[A-Za-zА-ЯЁа-яё-]+", value)}
+            if value.strip() and not (
+                rule["type"] == "PERSON" and words & PERSON_STOP_WORDS
+                or rule["type"] == "ORGANIZATION" and len(words) == 1 and words & ORGANIZATION_STOP_WORDS
+            ):
                 candidates.append({
                     "start": start,
                     "end": end,
@@ -208,6 +218,8 @@ def self_test() -> None:
     assert {candidate["value"] for candidate in uppercase_candidates} == {"ИВАНОВ ИВАН", "ООО ПУПКИНБАНК"}
     variants = find_candidates("Пупкинбанк; Пуп кинбанк", production_rules)
     assert {candidate["value"] for candidate in variants} == {"Пупкинбанк", "Пуп кинбанк"}
+    sample_rtf = replace_rtf(r"{\rtf1\ansi Test\par}", "Test\n", [(0, 4, "{{PERSON_1}}")])
+    assert sample_rtf == r"{\rtf1\ansi \{\{PERSON_1\}\}\par}"
     print(tr("self_test"))
 
 
@@ -249,6 +261,7 @@ def main() -> int:
         print(tr("drop_files"))
         return 0
     print(tr("processing", count=len(files), value=output_dir))
+    errors = 0
     for file_number, path in enumerate(files, 1):
         try:
             process(path, rules, output_dir, file_number, auto=args.auto)
@@ -257,8 +270,13 @@ def main() -> int:
             return 130
         except (OSError, ValueError, UnicodeError, json.JSONDecodeError, ExtractionError) as error:
             print(tr("error", value=error), file=sys.stderr)
-            return 1
-    return 0
+            error_file = output_dir / f"document_{file_number:03d}{path.suffix}.error.txt"
+            error_file.write_text(str(error) + "\n", encoding="utf-8")
+            print(tr("error_file", value=error_file), file=sys.stderr)
+            errors += 1
+    if errors:
+        print(tr("batch_errors", count=errors), file=sys.stderr)
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

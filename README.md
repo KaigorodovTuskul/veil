@@ -22,6 +22,12 @@ There is no GUI, cloud service, Node.js, or local LLM. The core is Python; the d
 
 The target Windows machine does not need Python or modified system environment variables.
 
+When started without arguments, `run_cmd.bat` opens a menu with interactive/automatic modes for Russian, English, and Simplified Chinese. Command-line flags are also supported:
+
+```bat
+run_cmd.bat --auto --lang en
+```
+
 ## Linux and macOS: run from source
 
 Requirements: Python 3.12 or newer. No system-wide installation is required.
@@ -128,6 +134,8 @@ Repeated values receive the same placeholder, such as `{{PERSON_1}}` or `{{EMAIL
 Rules are editable in [`patterns.json`](patterns.json). Matching is case-insensitive, so uppercase text is checked too. Common invisible spaces, Unicode dash variants, repeated spaces, and organization names with known suffixes are supported, including examples such as `Пупкинбанк` and `Пуп кинбанк`.
 
 Detection is heuristic and best-effort. Arbitrary misspellings are not guessed without context because fuzzy matching can hide normal words by mistake. Always inspect the anonymized document manually before sending it outside the machine.
+
+When a file cannot be safely processed, Veil continues with the remaining files and writes a neutral `document_NNN.<ext>.error.txt` report in `output`. Image-only PDFs receive this status because OCR is not enabled.
 
 ## Restore an anonymized text file
 

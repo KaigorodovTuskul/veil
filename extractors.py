@@ -245,12 +245,24 @@ def replace_rtf(raw: str, source_text: str, changes: list[tuple[int, int, str]])
         raise ExtractionError(tr("rtf_mapping"))
     if not changes:
         return remove_rtf_graphics(raw)
-    if any(start < 0 or end > len(chunks) or start >= end for start, end, _ in changes):
+    text_length = sum(len(value) for value, _, _, _ in chunks)
+    if any(start < 0 or end > text_length or start >= end for start, end, _ in changes):
         raise ExtractionError(tr("rtf_changes"))
     patches: list[tuple[int, int, str]] = []
     for start, end, replacement in changes:
-        raw_start = chunks[start][2]
-        raw_end = chunks[end - 1][3]
+        raw_start: int | None = None
+        raw_end: int | None = None
+        text_offset = 0
+        for value, _, chunk_start, chunk_end in chunks:
+            chunk_end_offset = text_offset + len(value)
+            if raw_start is None and start < chunk_end_offset and end > text_offset:
+                raw_start = chunk_start
+            if end <= chunk_end_offset and end > text_offset:
+                raw_end = chunk_end
+                break
+            text_offset = chunk_end_offset
+        if raw_start is None or raw_end is None:
+            raise ExtractionError(tr("rtf_changes"))
         escaped = replacement.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
         patches.append((raw_start, raw_end, escaped))
     for raw_start, raw_end, replacement in sorted(patches, reverse=True):
@@ -267,6 +279,15 @@ def remove_rtf_graphics(raw: str) -> str:
         while index < len(raw):
             char = raw[index]
             if char == "\\":
+                if raw.startswith("\\bin", index):
+                    index += 4
+                    digits: list[str] = []
+                    while index < len(raw) and raw[index].isdigit():
+                        digits.append(raw[index])
+                        index += 1
+                    if digits:
+                        index += int("".join(digits))
+                    continue
                 index += 2
                 continue
             if char == "{":
