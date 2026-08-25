@@ -11,4 +11,6 @@ $python = if (Test-Path .venv\Scripts\python.exe) { (Resolve-Path .venv\Scripts\
 
 Copy-Item patterns.json dist\anonymizer\patterns.json -Force
 Copy-Item run_cmd.bat dist\anonymizer\run_cmd.bat -Force
+New-Item -ItemType Directory -Force dist\anonymizer\config | Out-Null
+Copy-Item config\*.example dist\anonymizer\config -Force
 Write-Host "Portable build: dist\anonymizer\anonymizer.exe"

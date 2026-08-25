@@ -133,6 +133,29 @@ Repeated values receive the same placeholder, such as `{{PERSON_1}}` or `{{EMAIL
 
 Rules are editable in [`patterns.json`](patterns.json). Matching is case-insensitive, so uppercase text is checked too. Common invisible spaces, Unicode dash variants, repeated spaces, and organization names with known suffixes are supported, including examples such as `Пупкинбанк` and `Пуп кинбанк`.
 
+### Optional user dictionaries
+
+Veil can use a small local dictionary without any additional dependency. On the first run it creates:
+
+```text
+config/user_keywords.csv
+config/ignore_keywords.txt
+```
+
+Edit `config/user_keywords.csv` using UTF-8 and semicolon-separated columns:
+
+```csv
+type;keyword;aliases
+ORGANIZATION;Example Company;Example Co|Example Company LLC
+PERSON;Ivan Ivanov;Ivanov I.I.
+CITY;Yakutsk;Якутске|г. Якутск
+REGION;Sakha Republic;Republic of Sakha
+```
+
+Supported types are `PERSON`, `ORG`/`ORGANIZATION`, `CITY`, `REGION`, `COUNTRY`, `ADDRESS`, and `SENSITIVE`. Matching ignores case and accepts flexible whitespace between words. Put one normalized word or phrase per line into `config/ignore_keywords.txt` to suppress an exact candidate. User dictionary entries are also applied to filenames.
+
+The actual dictionary files are ignored by Git because they may contain confidential names. Only safe `.example` templates are included in the repository and portable archive. Do not commit real keywords or mapping files.
+
 Detection is heuristic and best-effort. Arbitrary misspellings are not guessed without context because fuzzy matching can hide normal words by mistake. Always inspect the anonymized document manually before sending it outside the machine.
 
 When a file cannot be safely processed, Veil continues with the remaining files and writes a neutral `document_NNN.<ext>.error.txt` report in `output`. Image-only PDFs receive this status because OCR is not enabled.
@@ -160,7 +183,7 @@ uv run python anonymize.py --self-test
 Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.zip -Force
 ```
 
-The resulting archive is `dist\Veil-windows-x64.zip`. It contains a self-contained one-folder application with `anonymizer.exe`, `patterns.json`, and `run_cmd.bat`.
+The resulting archive is `dist\Veil-windows-x64.zip`. It contains a self-contained one-folder application with `anonymizer.exe`, `patterns.json`, `run_cmd.bat`, and safe dictionary templates under `config`.
 
 Linux and macOS portable builds are not published yet. They can run directly from the virtual environment described above.
 
@@ -192,6 +215,7 @@ anonymize.py          cross-platform CLI, auto mode, and restore mode
 extractors.py         TXT/JSON/CSV/DOC/DOCX/RTF/PDF extraction
 i18n.py               Russian, English, and Simplified Chinese UI
 patterns.json         configurable detection rules
+config/               safe user dictionary templates; local files are ignored
 run_cmd.bat           folder-mode launcher
 build_portable.ps1    PyInstaller one-folder build
 input/                local source files; ignored by Git

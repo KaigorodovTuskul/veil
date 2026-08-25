@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added optional local user dictionaries for keywords and ignored phrases.
+- User dictionary matching is case-insensitive and supports aliases without new dependencies.
+
 ## 0.2.0
 
 - Made regex matching case-insensitive for uppercase documents.

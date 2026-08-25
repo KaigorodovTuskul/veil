@@ -1,0 +1,5 @@
+type;keyword;aliases
+# Use one row per sensitive phrase. Separate aliases with |.
+# ORGANIZATION;Example Company;Example Co|Example Company LLC
+# PERSON;Ivan Ivanov;Ivanov I.I.
+# CITY;Yakutsk;Якутске|г. Якутск

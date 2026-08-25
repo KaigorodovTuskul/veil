@@ -20,6 +20,10 @@ dist/
 # Local test/helper files
 check.bat
 
+# Local user dictionaries; only templates are tracked
+config/user_keywords.csv
+config/ignore_keywords.txt
+
 # User documents and generated results
 input/*
 !input/.gitkeep

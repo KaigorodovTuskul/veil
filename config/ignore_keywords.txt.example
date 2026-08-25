@@ -1,0 +1,4 @@
+# One exact word or phrase per line.
+# These entries suppress matching candidates with the same normalized value.
+# Example:
+# bank

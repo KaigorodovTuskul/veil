@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import csv
 import json
 import re
 import sys
@@ -18,6 +19,21 @@ SUPPORTED = {".txt", ".json", ".csv", ".doc", ".docx", ".rtf", ".pdf"}
 TEXT_FORMATS = {".txt", ".json", ".csv", ".rtf"}
 MATCH_FLAGS = 0
 SCRIPT_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+CONFIG_DIR = SCRIPT_DIR / "config"
+USER_KEYWORDS_PATH = CONFIG_DIR / "user_keywords.csv"
+IGNORE_KEYWORDS_PATH = CONFIG_DIR / "ignore_keywords.txt"
+USER_KEYWORD_TYPES = {
+    "PERSON": "PERSON",
+    "NAME": "PERSON",
+    "ADDRESS": "ADDRESS",
+    "CITY": "CITY",
+    "REGION": "REGION",
+    "COUNTRY": "COUNTRY",
+    "ORG": "ORGANIZATION",
+    "ORGANIZATION": "ORGANIZATION",
+    "COMPANY": "ORGANIZATION",
+    "SENSITIVE": "SENSITIVE",
+}
 PERSON_STOP_WORDS = {
     "банк", "банка", "департамент", "департамента", "договор", "комиссия", "комиссии",
     "председатель", "председателя", "правление", "правления", "россия", "россии",
@@ -29,6 +45,50 @@ ORGANIZATION_STOP_WORDS = {"группа", "группы", "договор", "д
 def load_rules() -> list[dict[str, Any]]:
     with (SCRIPT_DIR / "patterns.json").open(encoding="utf-8") as file:
         return json.load(file)
+
+
+def _normal_form(value: str) -> str:
+    value = value.translate(str.maketrans({"\u00a0": " ", "\u200b": " ", "\ufeff": "", "ё": "е", "Ё": "Е"}))
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _keyword_pattern(value: str) -> re.Pattern[str]:
+    parts = [part for part in re.split(r"\s+", value.strip()) if part]
+    body = r"[\s\u00a0]+".join(re.escape(part) for part in parts)
+    return re.compile(rf"(?<![\w]){body}(?![\w])", re.IGNORECASE)
+
+
+def load_user_keywords() -> dict[str, Any]:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not USER_KEYWORDS_PATH.exists():
+        USER_KEYWORDS_PATH.write_text("type;keyword;aliases\n", encoding="utf-8")
+    if not IGNORE_KEYWORDS_PATH.exists():
+        IGNORE_KEYWORDS_PATH.write_text("# One normalized word or phrase per line\n", encoding="utf-8")
+
+    entries: list[dict[str, Any]] = []
+    with USER_KEYWORDS_PATH.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file, delimiter=";")
+        for line_number, row in enumerate(reader, 2):
+            keyword = (row.get("keyword") or "").strip()
+            if not keyword or keyword.startswith("#"):
+                continue
+            entity_type = USER_KEYWORD_TYPES.get((row.get("type") or "SENSITIVE").strip().upper())
+            if entity_type is None:
+                raise ValueError(f"config/user_keywords.csv line {line_number}: unknown type")
+            variants = [keyword]
+            variants.extend(alias.strip() for alias in (row.get("aliases") or "").split("|") if alias.strip())
+            entries.append({
+                "type": entity_type,
+                "keyword": keyword,
+                "patterns": tuple(_keyword_pattern(variant) for variant in variants),
+            })
+
+    ignored = {
+        _normal_form(line)
+        for line in IGNORE_KEYWORDS_PATH.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    return {"entries": tuple(entries), "ignored": ignored}
 
 
 def read_text(path: Path) -> tuple[str, str]:
@@ -46,16 +106,31 @@ def write_text(path: Path, text: str, encoding: str) -> None:
     path.write_bytes(text.encode(encoding))
 
 
-def find_candidates(text: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def find_candidates(text: str, rules: list[dict[str, Any]], user_keywords: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     text = text.translate(str.maketrans({"\u00a0": " ", "\u200b": " ", "\ufeff": " ", "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-"}))
     candidates: list[dict[str, Any]] = []
+    user_keywords = user_keywords or {"entries": (), "ignored": set()}
+    for entry in user_keywords["entries"]:
+        for pattern in entry["patterns"]:
+            for match in pattern.finditer(text):
+                value = match.group(0)
+                if _normal_form(value) not in user_keywords["ignored"]:
+                    candidates.append({
+                        "start": match.start(),
+                        "end": match.end(),
+                        "value": value,
+                        "type": entry["type"],
+                        "name": "User dictionary",
+                        "priority": -1,
+                        "key": _normal_form(entry["keyword"]),
+                    })
     for priority, rule in enumerate(rules):
         for match in re.compile(rule["regex"], MATCH_FLAGS).finditer(text):
             group = rule.get("value_group")
             start, end = match.span(group or 0)
             value = text[start:end]
             words = {word.casefold() for word in re.findall(r"[A-Za-zА-ЯЁа-яё-]+", value)}
-            if value.strip() and not (
+            if value.strip() and _normal_form(value) not in user_keywords["ignored"] and not (
                 rule["type"] == "PERSON" and words & PERSON_STOP_WORDS
                 or rule["type"] == "ORGANIZATION" and len(words) == 1 and words & ORGANIZATION_STOP_WORDS
             ):
@@ -102,8 +177,8 @@ def ask(candidate: dict[str, Any], text: str) -> str:
         print(tr("invalid_choice"))
 
 
-def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False, token_prefix: str = "") -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
-    candidates = find_candidates(text, rules) + list(marked)
+def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False, token_prefix: str = "", user_keywords: dict[str, Any] | None = None) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
+    candidates = find_candidates(text, rules, user_keywords) + list(marked)
     candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
     selected: list[dict[str, Any]] = []
     for candidate in candidates:
@@ -111,13 +186,14 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
             continue
         selected.append(candidate)
     candidates = selected
-    replacements: dict[tuple[str, str], str] = {}
-    decisions: dict[tuple[str, str], str] = {}
+    replacements: dict[Any, str] = {}
+    original_values: dict[Any, str] = {}
+    decisions: dict[Any, str] = {}
     counters: dict[str, int] = {}
     changes: list[tuple[int, int, str]] = []
 
     for candidate in candidates:
-        key = (candidate["type"], candidate["value"])
+        key = candidate.get("key", (candidate["type"], candidate["value"]))
         decision = decisions.get(key)
         token = replacements.get(key)
         if decision is None:
@@ -129,11 +205,12 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
             if token is None:
                 token = token_for(candidate["type"], counters, token_prefix)
                 replacements[key] = token
+                original_values[key] = candidate["value"]
             changes.append((candidate["start"], candidate["end"], token))
 
     for start, end, replacement in reversed(changes):
         text = text[:start] + replacement + text[end:]
-    return text, {token: value for (_, value), token in replacements.items()}, len(changes), changes
+    return text, {token: original_values[key] for key, token in replacements.items()}, len(changes), changes
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:
@@ -146,7 +223,7 @@ def output_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
 
-def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_number: int, auto: bool = False) -> None:
+def process(path: Path, rules: list[dict[str, Any]], user_keywords: dict[str, Any], output_dir: Path, file_number: int, auto: bool = False) -> None:
     if path.suffix.lower() not in SUPPORTED:
         raise ValueError(tr("unsupported_format", value=path.suffix or "<no extension>"))
     extraction, encoding = extract(path)
@@ -154,8 +231,8 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_numb
     for warning in extraction.warnings:
         print(tr("warning", value=warning), file=sys.stderr)
     validate_json_if_needed(path, text)
-    anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked, auto=auto)
-    safe_stem, filename_mapping, filename_count, _ = anonymize(path.stem, rules, auto=auto, token_prefix="FILENAME_")
+    anonymized, mapping, count, changes = anonymize(text, rules, extraction.marked, auto=auto, user_keywords=user_keywords)
+    safe_stem, filename_mapping, filename_count, _ = anonymize(path.stem, rules, auto=auto, token_prefix="FILENAME_", user_keywords=user_keywords)
     mapping.update(filename_mapping)
     for token in filename_mapping:
         safe_stem = safe_stem.replace(token, "")
@@ -171,7 +248,7 @@ def process(path: Path, rules: list[dict[str, Any]], output_dir: Path, file_numb
     mapping_payload = dict(mapping)
     mapping_payload["_veil"] = {"original_filename": path.name}
     map_path.write_text(json.dumps(mapping_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"\n{tr('done', replaced=count + filename_count, found=len(find_candidates(text, rules)) + len(find_candidates(path.stem, rules)))}")
+    print(f"\n{tr('done', replaced=count + filename_count, found=len(find_candidates(text, rules, user_keywords)) + len(find_candidates(path.stem, rules, user_keywords)))}")
     print(tr("file", value=result))
     print(tr("mapping", value=map_path))
     print(tr("filename_hidden", value=result.name))
@@ -240,6 +317,21 @@ def self_test() -> None:
     assert "Footer" in replace_rtf(footer_rtf, footer_text, [(footer_start, footer_start + 7, "{{ORGANIZATION_1}}")])
     sample_rtf = replace_rtf(r"{\rtf1\ansi Test\par}", "Test\n", [(0, 4, "{{PERSON_1}}")])
     assert sample_rtf == r"{\rtf1\ansi \{\{PERSON_1\}\}\par}"
+    dictionary = {
+        "entries": ({
+            "type": "ORGANIZATION",
+            "keyword": 'ООО "Ромашка"',
+            "patterns": (_keyword_pattern('ООО "Ромашка"'), _keyword_pattern("Ромашка")),
+        },),
+        "ignored": {_normal_form("банк")},
+    }
+    dictionary_candidates = find_candidates('ООО "РОМАШКА" и Ромашка; банк', production_rules, dictionary)
+    assert {candidate["value"] for candidate in dictionary_candidates} == {'ООО "РОМАШКА"', "Ромашка"}
+    dictionary_result, dictionary_mapping, _, _ = anonymize(
+        'ООО "РОМАШКА" и Ромашка; банк', production_rules, auto=True, user_keywords=dictionary
+    )
+    assert dictionary_result == '{{ORGANIZATION_1}} и {{ORGANIZATION_1}}; банк'
+    assert dictionary_mapping == {'{{ORGANIZATION_1}}': 'ООО "РОМАШКА"'}
     print(tr("self_test"))
 
 
@@ -268,6 +360,8 @@ def main() -> int:
         restore_file(Path(args.restore[0]), Path(args.restore[1]))
         return 0
     rules = load_rules()
+    user_keywords = load_user_keywords()
+    print(tr("user_dictionary", keywords=len(user_keywords["entries"]), ignored=len(user_keywords["ignored"])))
     input_dir = SCRIPT_DIR / "input"
     output_dir = SCRIPT_DIR / "output"
     input_dir.mkdir(exist_ok=True)
@@ -284,7 +378,7 @@ def main() -> int:
     errors = 0
     for file_number, path in enumerate(files, 1):
         try:
-            process(path, rules, output_dir, file_number, auto=args.auto)
+            process(path, rules, user_keywords, output_dir, file_number, auto=args.auto)
         except KeyboardInterrupt:
             print(f"\n{tr('stopped')}")
             return 130
