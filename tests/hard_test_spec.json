@@ -1,0 +1,58 @@
+{
+  "document": "veil_hard_test.docx",
+  "section_start": "VEIL HARD TEST BEGIN",
+  "section_end": "VEIL HARD TEST END",
+  "metrics": {
+    "recall": "replaced positive occurrences / all positive occurrences",
+    "exact_precision": "correctly bounded replacements / all replacements",
+    "negative_false_positive_rate": "changed negative controls / all negative controls",
+    "initial_pass_target": {
+      "recall": 0.95,
+      "exact_precision": 0.95,
+      "negative_false_positive_rate": 0.0
+    }
+  },
+  "positive": [
+    {"type": "PERSON", "text": "Иванов Николай Николаевич"},
+    {"type": "PERSON", "text": "Иванову Николаю Николаевичу"},
+    {"type": "PERSON", "text": "Иванова Николая Николаевича"},
+    {"type": "PERSON", "text": "Иванов Н.Н."},
+    {"type": "PERSON", "text": "ИВАНОВ Н.Н."},
+    {"type": "PERSON", "text": "И. Н. Иванов"},
+    {"type": "PERSON", "text": "Николай", "context": "Отдельно имя: Николай"},
+    {"type": "PERSON", "text": "John Smith"},
+    {"type": "PERSON", "text": "Smith J."},
+    {"type": "PERSON", "text": "JOHN SMITH"},
+    {"type": "ORGANIZATION", "text": "ООО «Ромашка»"},
+    {"type": "ORGANIZATION", "text": "ООО \"РОМАШКА\""},
+    {"type": "ORGANIZATION", "text": "АО «Ромашка-Банк»"},
+    {"type": "ORGANIZATION", "text": "Ромашкабанк"},
+    {"type": "ORGANIZATION", "text": "Ромашка банк"},
+    {"type": "ORGANIZATION", "text": "Example Holdings Ltd."},
+    {"type": "CITY", "text": "Якутск"},
+    {"type": "CITY", "text": "Якутске"},
+    {"type": "CITY", "text": "Якутска"},
+    {"type": "CITY", "text": "ЯКУТСК"},
+    {"type": "CITY", "text": "Москва"},
+    {"type": "CITY", "text": "Москве"},
+    {"type": "REGION", "text": "Московская область"},
+    {"type": "REGION", "text": "Московской области"},
+    {"type": "REGION", "text": "Республика Саха (Якутия)"},
+    {"type": "COUNTRY", "text": "Россия"},
+    {"type": "COUNTRY", "text": "России"},
+    {"type": "COUNTRY", "text": "Российская Федерация"},
+    {"type": "ADDRESS", "text": "г. Якутск, ул. Ленина, д. 10, кв. 5"},
+    {"type": "ADDRESS", "text": "Москва, проспект Мира, дом 20"},
+    {"type": "EMAIL", "text": "test.person@example.com"},
+    {"type": "PHONE", "text": "+7 (999) 123-45-67"},
+    {"type": "INN", "text": "123456789012"},
+    {"type": "SNILS", "text": "123-456-789 00"},
+    {"type": "PASSPORT", "text": "4500 123456"}
+  ],
+  "negative": [
+    "ИЗМЕНЕНИЯ СТРУКТУРЫ ИСТОЧНИКОВ И ОБЪЕМОВ",
+    "СТРАТЕГИЧЕСКИЙ РИСК",
+    "ОБЪЕМОВ КРЕДИТНОГО ПОРТФЕЛЯ",
+    "проспекты эмиссии обыкновенных и привилегированных акций"
+  ]
+}

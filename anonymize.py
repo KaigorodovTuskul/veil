@@ -40,6 +40,13 @@ PERSON_STOP_WORDS = {
     "российская", "российской", "федерация", "федерации", "республика", "республики",
 }
 ORGANIZATION_STOP_WORDS = {"группа", "группы", "договор", "департамент", "департамента", "комиссия", "комиссии"}
+ENGLISH_GIVEN_NAMES = {
+    "alex", "alice", "anna", "charles", "david", "daniel", "edward", "elizabeth", "emily", "george",
+    "henry", "james", "john", "joseph", "julia", "karen", "laura", "linda", "maria", "michael",
+    "nancy", "natalie", "nicholas", "oliver", "patricia", "paul", "peter", "richard", "robert", "sarah",
+    "steven", "susan", "thomas", "william",
+}
+LEGAL_FORM_PATTERN = re.compile(r"(?i)(?<![\w-])(?:ООО|АО|ПАО|ОАО|ЗАО|ИП|АКБ|LLC|LTD|INC)(?![\w-])")
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -129,7 +136,20 @@ def find_candidates(text: str, rules: list[dict[str, Any]], user_keywords: dict[
             group = rule.get("value_group")
             start, end = match.span(group or 0)
             value = text[start:end]
+            if rule["type"] == "ORGANIZATION":
+                legal_forms = list(LEGAL_FORM_PATTERN.finditer(value))
+                if legal_forms and legal_forms[-1].start() > 0:
+                    end = start + legal_forms[-1].end()
+                    value = text[start:end]
+            if rule["type"] == "ADDRESS":
+                trimmed = value.rstrip(" \t.,;:")
+                end -= len(value) - len(trimmed)
+                value = trimmed
+            if rule["name"] == "Person surname and name" and value.isupper():
+                continue
             words = {word.casefold() for word in re.findall(r"[A-Za-zА-ЯЁа-яё-]+", value)}
+            if rule["name"] in {"English person full name", "English person uppercase full name"} and not words & ENGLISH_GIVEN_NAMES:
+                continue
             if value.strip() and _normal_form(value) not in user_keywords["ignored"] and not (
                 rule["type"] == "PERSON" and words & PERSON_STOP_WORDS
                 or rule["type"] == "ORGANIZATION" and len(words) == 1 and words & ORGANIZATION_STOP_WORDS
@@ -299,6 +319,12 @@ def self_test() -> None:
     assert {candidate["value"] for candidate in uppercase_candidates} == {"ИВАНОВ ИВАН", "ООО ПУПКИНБАНК"}
     variants = find_candidates("Пупкинбанк; Пуп кинбанк", production_rules)
     assert {candidate["value"] for candidate in variants} == {"Пупкинбанк", "Пуп кинбанк"}
+    extended_persons = find_candidates("Иванову Николаю Николаевичу; John Smith; Smith J.; JOHN SMITH", production_rules)
+    assert {candidate["value"] for candidate in extended_persons} == {
+        "Иванову Николаю Николаевичу", "John Smith", "Smith J.", "JOHN SMITH"
+    }
+    assert {candidate["value"] for candidate in find_candidates("Ромашкабанк", production_rules)} == {"Ромашкабанк"}
+    assert {candidate["value"] for candidate in find_candidates("АКБ «Пупкинбанк» АО НА 2026 ГОД", production_rules)} == {"АКБ «Пупкинбанк» АО"}
     filename_result, filename_mapping, _, _ = anonymize("1011-ПЛ АКБ Пупкинбанк", production_rules, auto=True, token_prefix="FILENAME_")
     assert filename_result == "1011-ПЛ {{FILENAME_ORGANIZATION_1}}"
     assert filename_mapping == {"{{FILENAME_ORGANIZATION_1}}": "АКБ Пупкинбанк"}
@@ -307,6 +333,17 @@ def self_test() -> None:
     assert {candidate["value"] for candidate in find_candidates("С.А. Миллер; компании PricewaterhouseCoopers", production_rules)} == {"С.А. Миллер", "PricewaterhouseCoopers"}
     assert {candidate["value"] for candidate in find_candidates("Банк России и политика Банка России", production_rules)} == {"России"}
     assert {candidate["value"] for candidate in find_candidates("ЯКУТСК; Якутске; Республика Саха (Якутия)", production_rules)} == {"ЯКУТСК", "Якутске", "Республика Саха (Якутия)"}
+    assert {candidate["value"] for candidate in find_candidates("Москва; Москве; Москвы; г. Москва", production_rules)} == {"Москва", "Москве", "Москвы"}
+    address_candidates = find_candidates("Адрес: г. Якутск, ул. Ленина, д. 10, кв. 5. Проживает по адресу: Москва, проспект Мира, дом 20.", production_rules)
+    assert {candidate["value"] for candidate in address_candidates if candidate["type"] == "ADDRESS"} == {
+        "г. Якутск, ул. Ленина, д. 10, кв. 5",
+        "Москва, проспект Мира, дом 20",
+    }
+    negative_candidates = find_candidates(
+        "СТРАТЕГИЧЕСКИЙ РИСК; ОБЪЕМОВ КРЕДИТНОГО ПОРТФЕЛЯ; проспекты эмиссии обыкновенных акций",
+        production_rules,
+    )
+    assert not {candidate["value"] for candidate in negative_candidates if candidate["type"] in {"PERSON", "ADDRESS"}}
     unicode_rtf = r"{\rtf1\ansi\u1040?\u1050?}"
     assert _rtf_text_chunks(unicode_rtf)[0] == "АК"
     assert replace_rtf(unicode_rtf, "АК", [(0, 2, "{{PERSON_1}}")]) == r"{\rtf1\ansi\{\{PERSON_1\}\}}"
