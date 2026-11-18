@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from anonymize import CONFIG_DIR, load_rules, load_user_keywords
+from anonymize import CONFIG_DIR, find_candidates, load_rules, load_user_keywords
 from veil_protocol import MaskingSession, PolicyError, REQUEST_FIELDS, SSEProcessor, json_bytes, json_loads, mask_request, restore_response
 
 MAX_BODY = 8 * 1024 * 1024
@@ -151,7 +151,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 raise PolicyError("Duplicate provider headers are blocked")
             if values:
                 value = values[0]
-                if len(value) > 4096 or session.mask(value) != value:
+                if len(value) > 4096 or find_candidates(value, self.server.rules, self.server.keywords) or session.mask(value) != value:
                     raise PolicyError("Sensitive or oversized provider headers are blocked")
                 headers[name] = value
         return headers
@@ -205,6 +205,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
         connection = None
         try:
             headers = self.provider_headers(session, self.path)
+        except PolicyError as error:
+            self.reply(422, {"error": {"type": "veil_policy_error", "message": str(error)}})
+            return
+        try:
             connection, path = self.server.connect(self.path)
             connection.request("POST" if body is not None else "GET", path, body=body, headers=headers)
             response = connection.getresponse()

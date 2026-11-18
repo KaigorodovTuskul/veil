@@ -40,6 +40,34 @@ values around 699 ms; a 20,000-character unbroken lowercase word exceeded a
 5-second subprocess timeout. Run `tests/benchmark.py` for current values; absolute
 times are hardware-dependent and the benchmark uses synthetic data.
 
+## Round 2 — `bdbc516`
+
+| Reviewer focus | Effectiveness | Simplicity / ease | Speed | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| Privacy and protocol correctness | 8.0 | 8.5 | 8.5 | 8.33 |
+| Terminal user experience | 8.0 | 8.5 | 8.8 | 8.43 |
+| Performance and maintainability | 8.0 | 8.7 | 6.5 | 7.73 |
+| **Round mean** | | | | **8.11** |
+
+All 26 tests passed. Reviewers independently confirmed the permanent Codex,
+Claude Code and OpenCode two-turn mock tests. The prior issues were fixed, but
+reassessment found:
+
+1. Header inspection reused a sealed session and could miss a new sensitive
+   value appearing only in a permitted provider header.
+2. Fragmented Responses custom-tool input events were not restored.
+3. Other old regex rules still retried inside long uppercase/mixed/Cyrillic
+   words. The lowercase-only regression was insufficient.
+
+Changes for the next assessment independently scan provider headers, add custom
+tool input stream restoration, fix all identified start boundaries and ambiguous
+secret separators, and expand bounded subprocess regressions and the full-request
+benchmark. An incomplete private-key block is now masked through the end of text.
+
+Observed improved values: 100 KiB repeated content around 133 ms, 5000 unique
+emails around 150 ms (full proxy request around 270 ms), and restoration of 201
+fields with 1000 mapping values around 25 ms.
+
 ## Scope of evidence
 
 Tests inspect mock-provider request bodies and exercise response reconstruction.

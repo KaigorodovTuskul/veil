@@ -71,7 +71,7 @@ class DetectionTests(unittest.TestCase):
             self.assertEqual(anonymize(source, RULES, auto=True)[0], source)
 
     def test_long_identifier_finishes_without_quadratic_backtracking(self):
-        command = [sys.executable, "-c", "from anonymize import find_candidates, load_rules; assert not find_candidates('a' * 100000, load_rules())"]
+        command = [sys.executable, "-c", "from anonymize import find_candidates, load_rules; rules=load_rules(); samples=['a'*100000,'A'*100000,'aA'*50000,chr(0x410)*100000,'token'+'-'*100000,'+'*100000]; assert all(not find_candidates(source, rules) for source in samples)"]
         result = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -159,6 +159,15 @@ class ProtocolTests(unittest.TestCase):
             processor.finish()
             with self.assertRaises(PolicyError):
                 processor.process(packet(delta))
+
+    def test_custom_tool_input_deltas_restore_without_json_escaping(self):
+        token = "{{VEIL_test_SECRET_1}}"
+        original = 'Пример "quote" \\path\nline'
+        processor = SSEProcessor("/v1/responses", {token: original})
+        output = b"".join(processor.process(packet({"type": "response.custom_tool_call_input.delta", "output_index": 0, "delta": char})) for char in token)
+        output += processor.process(packet({"type": "response.completed", "response": {}}))
+        processor.finish()
+        self.assertEqual("".join(value.get("delta", "") for value in event_values(output)), original)
 
     def test_every_token_boundary_and_json_escape(self):
         token = "{{VEIL_test_PERSON_1}}"
@@ -362,6 +371,13 @@ class IntegrationTests(unittest.TestCase):
         status, _ = self.request("/v1/responses", {"model": "mock", "input": "Repeat opaqueShortSecret", "metadata": {"password": "opaqueShortSecret"}})
         self.assertEqual(status, 200)
         self.assertNotIn(b"opaqueShortSecret", self.provider.requests[-1][1])
+
+    def test_sensitive_provider_headers_are_blocked_independently_of_body(self):
+        before = len(self.provider.requests)
+        for name in ("anthropic-beta", "anthropic-version", "openai-beta"):
+            status, _ = self.request("/v1/responses", {"model": "mock", "input": "hello"}, {name: "test@example.com"})
+            self.assertEqual(status, 422)
+        self.assertEqual(len(self.provider.requests), before)
 
     def test_provider_errors_and_headers_are_not_relayed(self):
         status, raw = self.request("/v1/responses", {"model": "mock-error", "input": "hi"})

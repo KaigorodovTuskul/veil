@@ -409,7 +409,7 @@ class SSEProcessor:
                     self.terminal = True
         else:
             kind = payload.get("type", "")
-            if kind in {"response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta"}:
+            if kind in {"response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta"}:
                 key = (payload.get("output_index", 0), payload.get("content_index", 0), kind)
                 transform(payload, "delta", key, "arguments" in kind)
             else:

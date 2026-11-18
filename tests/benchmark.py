@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from anonymize import anonymize, load_rules, restore
-from veil_protocol import SSEProcessor, json_bytes, restore_response
+from veil_protocol import MaskingSession, SSEProcessor, json_bytes, mask_request, restore_response
 
 
 def main():
@@ -36,12 +36,26 @@ def main():
     duration = time.perf_counter() - start
     assert output.count(b"test@example.com") == 100
     adversarial = []
-    for source in ("a" * 100000, " ".join(f"person{i}@example.com" for i in range(5000))):
+    samples = {
+        "lowercase": "a" * 100000,
+        "uppercase": "A" * 100000,
+        "mixed_case": "aA" * 50000,
+        "cyrillic": chr(0x410) * 100000,
+        "hyphen_secret": "token" + "-" * 100000,
+        "email_punctuation": "+" * 100000,
+        "unique_emails": " ".join(f"person{i}@example.com" for i in range(5000)),
+    }
+    for name, source in samples.items():
         start = time.perf_counter()
         masked, mapping, count, _ = anonymize(source, rules, auto=True)
         elapsed_ms = (time.perf_counter() - start) * 1000
         assert restore(masked, mapping) == source
-        adversarial.append({"characters": len(source), "unique_values": len(mapping), "replacements": count, "mask_ms": round(elapsed_ms, 3)})
+        start = time.perf_counter()
+        session = MaskingSession(rules)
+        request = mask_request("/v1/responses", {"model": "mock", "input": source}, session)
+        request_ms = (time.perf_counter() - start) * 1000
+        assert restore(request["input"], session.mapping) == source
+        adversarial.append({"sample": name, "characters": len(source), "unique_values": len(mapping), "replacements": count, "mask_ms": round(elapsed_ms, 3), "full_request_ms": round(request_ms, 3)})
     mapping = {f"{{{{VEIL_benchmark_EMAIL_{index}}}}}": f"person{index}@example.com" for index in range(1000)}
     start = time.perf_counter()
     assert restore_response(["ordinary text"] * 201, mapping) == ["ordinary text"] * 201
