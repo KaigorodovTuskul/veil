@@ -235,7 +235,7 @@ uv run python -m py_compile anonymize.py extractors.py i18n.py veil_proxy.py vei
 git diff --check
 ```
 
-If `uv` is unavailable, use the Python executable from `.venv` instead. The repository's CI currently validates the Windows build; Linux/macOS source execution should be checked locally on the target platform.
+If `uv` is unavailable, use the Python executable from `.venv` instead. CI runs the self-test and privacy integration tests on Windows, Linux and macOS, and builds the Windows portable package.
 
 ## Repository layout
 

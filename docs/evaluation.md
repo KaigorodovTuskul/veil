@@ -68,6 +68,39 @@ Observed improved values: 100 KiB repeated content around 133 ms, 5000 unique
 emails around 150 ms (full proxy request around 270 ms), and restoration of 201
 fields with 1000 mapping values around 25 ms.
 
+## Round 3 — `2e29c76`
+
+| Reviewer focus | Effectiveness | Simplicity / ease | Speed | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| Privacy and protocol correctness | 8.8 | 8.5 | 8.7 | 8.67 |
+| Terminal user experience | 8.8 | 8.8 | 9.0 | 8.87 |
+| Performance and maintainability | 8.8 | 8.7 | 8.8 | 8.77 |
+| **Round mean** | | | | **8.77** |
+
+The unrounded mean is 78.9 / 9 = 8.7666…, which exceeds the requested 8.5
+threshold. Reviewers found no remaining blocking defect in the documented local
+text scenario. All 28 tests passed. The privacy and user-experience reviewers
+independently reran all three real CLI two-turn mock checks successfully.
+
+Confirmed fixes: sensitive permitted headers produce 422 with zero provider
+requests, fragmented custom-tool input restores exact text, and the expanded
+long-word/punctuation regressions finish within their subprocess deadline.
+
+Current local measurements: 100 KiB repeated text around 140 ms; 100,000-character
+ASCII/Cyrillic/adversarial inputs around 100–150 ms; 5000 unique email values
+around 160 ms for masking and 283 ms for the full request; restoration of 201
+fields / 1000 mappings around 25 ms; SSE around 120,000 frames per second.
+
+The final Windows portable executable was rebuilt and independently exercised
+against a loopback mock: built-in self-test, proxy help, authenticated health,
+JSON and SSE forwarding/restoration passed, and the original email did not reach
+the provider. No real cloud credentials or documents were used.
+
+Recommended subsequent work is corpus-based detection/utility evaluation for the
+user's document types, with organization-specific dictionaries. It is separate
+from this completed implementation/review cycle; the current scores do not claim
+perfect redaction or certification.
+
 ## Scope of evidence
 
 Tests inspect mock-provider request bodies and exercise response reconstruction.
