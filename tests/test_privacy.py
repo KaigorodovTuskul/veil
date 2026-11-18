@@ -1,10 +1,10 @@
 """Synthetic regression tests; never call an external model."""
 
-import contextlib
 import http.client
-import io
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from anonymize import _keyword_pattern, anonymize, find_candidates, load_rules, restore
 from veil_protocol import MaskingSession, PolicyError, SSEProcessor, StreamRestorer, json_bytes, json_loads, mask_request
-from veil_proxy import MAX_BODY, ProxyServer
+from veil_proxy import ProxyServer
 
 
 RULES = load_rules()
@@ -70,6 +70,11 @@ class DetectionTests(unittest.TestCase):
         for source in spec["negative"]:
             self.assertEqual(anonymize(source, RULES, auto=True)[0], source)
 
+    def test_long_identifier_finishes_without_quadratic_backtracking(self):
+        command = [sys.executable, "-c", "from anonymize import find_candidates, load_rules; assert not find_candidates('a' * 100000, load_rules())"]
+        result = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 class ProtocolTests(unittest.TestCase):
     def session(self):
@@ -119,6 +124,41 @@ class ProtocolTests(unittest.TestCase):
         for raw in ['{"input":"safe","input":"secret"}', '{"n":NaN}']:
             with self.assertRaises(PolicyError):
                 json_loads(raw)
+
+    def test_known_secret_is_masked_everywhere_independent_of_field_order(self):
+        for credential_key in ("password", "token", "refresh_token", "aws_secret_access_key"):
+            for reverse in (False, True):
+                pairs = [("model", "mock"), ("input", "Use opaqueShortSecret again: opaqueShortSecret"), ("metadata", {credential_key: "opaqueShortSecret"})]
+                payload = dict(reversed(pairs) if reverse else pairs)
+                session = self.session()
+                masked = mask_request("/v1/responses", payload, session)
+                self.assertNotIn(b"opaqueShortSecret", json_bytes(masked))
+                self.assertEqual(len(session.mapping), 1)
+
+    def test_credential_schema_and_namespace_tools_are_preserved(self):
+        schema = {"type": "object", "properties": {"password": {"type": "string"}, "refresh_token": {"type": "string"}}}
+        for path, payload in [
+            ("/v1/messages", {"messages": [{"role": "user", "content": "hello"}], "tools": [{"name": "save", "input_schema": schema}]}),
+            ("/v1/responses", {"input": "hello", "tools": [{"type": "namespace", "name": "local", "tools": [{"type": "function", "name": "save", "parameters": schema}]}]}),
+        ]:
+            result = mask_request(path, {"model": "mock", **payload}, self.session())
+            self.assertEqual(result["tools"], payload["tools"])
+
+    def test_sse_terminal_events_required_and_post_terminal_data_rejected(self):
+        cases = [
+            ("/v1/chat/completions", {"choices": [{"index": 0, "delta": {"content": "partial"}}]}, {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}),
+            ("/v1/messages", {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "partial"}}, {"type": "message_stop"}),
+            ("/v1/responses", {"type": "response.output_text.delta", "output_index": 0, "delta": "partial"}, {"type": "response.completed", "response": {}}),
+        ]
+        for path, delta, terminal in cases:
+            processor = SSEProcessor(path, {})
+            processor.process(packet(delta))
+            with self.assertRaises(PolicyError):
+                processor.finish()
+            processor.process(packet(terminal))
+            processor.finish()
+            with self.assertRaises(PolicyError):
+                processor.process(packet(delta))
 
     def test_every_token_boundary_and_json_escape(self):
         token = "{{VEIL_test_PERSON_1}}"
@@ -317,6 +357,11 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertNotIn(b"PRIVATE INPUT", body)
         self.assertEqual(len(self.provider.requests), before)
+
+    def test_known_credential_does_not_reach_provider_in_other_fields(self):
+        status, _ = self.request("/v1/responses", {"model": "mock", "input": "Repeat opaqueShortSecret", "metadata": {"password": "opaqueShortSecret"}})
+        self.assertEqual(status, 200)
+        self.assertNotIn(b"opaqueShortSecret", self.provider.requests[-1][1])
 
     def test_provider_errors_and_headers_are_not_relayed(self):
         status, raw = self.request("/v1/responses", {"model": "mock-error", "input": "hi"})

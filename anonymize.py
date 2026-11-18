@@ -232,6 +232,7 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
     original_values: dict[Any, str] = {}
     decisions: dict[Any, str] = {}
     counters: dict[str, int] = {}
+    reserved_tokens = set(re.findall(r"\{\{[^{}\n]+\}\}", text))
     changes: list[tuple[int, int, str]] = []
 
     for candidate in candidates:
@@ -246,15 +247,23 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
         if decisions[key] == "replace":
             if token is None:
                 token = token_for(candidate["type"], counters, token_prefix)
-                while token in text:
+                while token in reserved_tokens:
                     token = token_for(candidate["type"], counters, token_prefix)
                 replacements[key] = token
                 original_values[key] = candidate["value"]
             changes.append((candidate["start"], candidate["end"], token))
 
-    for start, end, replacement in reversed(changes):
-        text = text[:start] + replacement + text[end:]
-    return text, {token: original_values[key] for key, token in replacements.items()}, len(changes), changes
+    return apply_changes(text, changes), {token: original_values[key] for key, token in replacements.items()}, len(changes), changes
+
+
+def apply_changes(text: str, changes: list[tuple[int, int, str]]) -> str:
+    parts = []
+    previous = 0
+    for start, end, replacement in changes:
+        parts.extend((text[previous:start], replacement))
+        previous = end
+    parts.append(text[previous:])
+    return "".join(parts)
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:
@@ -415,6 +424,7 @@ def main() -> int:
     parser.add_argument("--restore", nargs=2, metavar=("FILE", "MAP"), help=tr("restore_help"))
     parser.add_argument("--self-test", action="store_true", help=tr("self_test_help"))
     parser.add_argument("--auto", action="store_true", help=tr("auto_help"))
+    parser.add_argument("--proxy", action="store_true", help=tr("proxy_help"))
     parser.add_argument("--lang", choices=LANGUAGES, default=language(), help=tr("lang_help"))
     args = parser.parse_args()
     set_language(args.lang)

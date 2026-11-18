@@ -230,6 +230,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.reply(502, {"error": {"message": "Provider response could not be processed safely"}})
             else:
                 self.close_connection = True
+                try:
+                    self.wfile.write(b'event: error\ndata: {"type":"error","error":{"type":"veil_stream_error","message":"Provider stream failed validation or ended early"}}\n\n')
+                    self.wfile.flush()
+                except OSError:
+                    pass
         finally:
             if connection is not None:
                 connection.close()

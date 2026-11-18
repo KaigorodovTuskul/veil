@@ -107,10 +107,37 @@ release and must be verified before use with private files.
 
 ### OpenCode / OpenAI-compatible clients
 
-Configure the provider's base URL as `http://127.0.0.1:8765/v1` and its API key as
-the **local** Veil token. Use the provider's documented configuration format for
-your installed OpenCode release; its configuration schema changes across releases.
-Select Chat Completions or Responses, text-only messages and local function tools.
+The following `opencode.json` format was tested with OpenCode **v2.2.5**:
+
+```json
+{
+  "model": "veil/YOUR_MODEL_ID",
+  "providers": {
+    "veil": {
+      "name": "Veil",
+      "env": ["VEIL_PROXY_TOKEN"],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:8765/v1",
+        "apiKey": "{env:VEIL_PROXY_TOKEN}",
+        "encoding": "none"
+      },
+      "models": {
+        "YOUR_MODEL_ID": {
+          "name": "Your provider model"
+        }
+      }
+    }
+  },
+  "snapshots": false
+}
+```
+
+Replace `YOUR_MODEL_ID` in both places with your provider's model ID. Keep request
+compression disabled (`encoding: none`): Veil inspects uncompressed JSON. Start
+with `opencode --standalone` so an existing background service does not reuse
+different endpoint settings. Older OpenCode versions use a different schema.
+Other OpenAI-compatible clients also use the `/v1` base URL and local Veil token.
 Anthropic clients use the base URL without `/v1`.
 
 ### Synthetic connectivity check
@@ -134,6 +161,23 @@ uv run python tests/benchmark.py
 The tests use a local mock provider and inspect what it receives, including
 fragmented UTF-8/SSE and escaped tool arguments. They require no external account.
 
+Optional checks of installed CLI binaries:
+
+```text
+uv run python tests/cli_smoke.py codex
+uv run python tests/cli_smoke.py claude
+uv run python tests/cli_smoke.py opencode
+```
+
+Verified locally with Codex **0.165.0**, Claude Code **2.1.109** and OpenCode
+**v2.2.5**. Each check creates isolated temporary configuration, reads a synthetic
+local file through a real tool call and verifies that its email/password do not
+reach the mock provider. It also checks the restored final answer and unchanged
+source. The Codex check runs only the mock's fixed file-read command with sandbox
+disabled because a fresh temporary Windows profile has no configured sandbox;
+this does not alter your normal Codex settings. These checks do not verify cloud
+credentials, model quality or arbitrary CLI features.
+
 ## Supported contract and failure behavior
 
 | Operation | Behavior |
@@ -149,6 +193,9 @@ Detection reuses `patterns.json` and local user dictionaries, loaded at startup.
 Restart the proxy after editing them. Ignore-list entries deliberately allow
 those values through; review that file as part of your privacy policy.
 One original value gets one random-namespace placeholder across an entire request.
+Veil first collects findings across all fields, including explicit credential
+fields, then masks their occurrences throughout the request regardless of field
+order. Tool JSON Schemas are distinguished from actual argument values.
 Each request has an independent mapping; simultaneous users never share mappings.
 Mappings exist in memory until that request completes, with no database or audit
 payload storage. Process dumps and local memory access remain sensitive.
@@ -167,7 +214,9 @@ for one trusted local user, not a public multi-tenant service.
 
 Errors before forwarding return a local error without sending the request.
 There is **no fail-open switch**. Invalid/unsupported provider responses return
-502; a failure after SSE headers closes the stream without a success terminator.
+502; a failure after SSE headers emits a generic stream error and closes the
+connection without a success terminator. EOF before the protocol's completion
+event is treated as a truncated response.
 Provider errors preserve the status but hide their raw body to avoid reflected
 secrets. Request/response bodies, credentials and original values are not logged.
 The local token is required even on health endpoints; browser-origin requests
