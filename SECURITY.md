@@ -1,6 +1,18 @@
 # Security policy
 
-Veil is a local preprocessing tool. It is not a guarantee that every sensitive value will be found.
+Veil is a local preprocessing tool and text-only LLM privacy proxy. It is not a guarantee that every sensitive value will be found.
+
+## Proxy trust boundary
+
+- Run the harness and Veil locally. The proxy holds raw data and provider credentials in memory.
+- The proxy requires a local token, binds only to loopback and blocks unsupported content and inspection failures. There is no passthrough mode.
+- Protect `config/proxy_token`, your provider-key environment, crash dumps and agent transcripts. The proxy does not write request mappings or payload logs.
+- Restrict harness network egress and external tools separately. A changed API base URL does not stop direct HTTP, uploads, telemetry or remote MCP calls.
+- Names removed from a document do not hide confidential financial results, inventions or identity inferred from context.
+- Review custom rules and ignore lists. Restart the proxy after changes.
+- The server is for a trusted local user; do not publish it through a tunnel or shared ingress. Local processes with the same account may be able to read its token and memory.
+
+See [docs/proxy.md](docs/proxy.md) for supported protocols, limits and setup.
 
 ## Safe usage
 

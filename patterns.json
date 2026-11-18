@@ -1,5 +1,49 @@
 [
   {
+    "name": "Provider API key",
+    "type": "SECRET",
+    "regex": "(?<![A-Za-z0-9_-])(?:sk-(?:proj-|ant-api\\d{2}-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[A-Za-z0-9_-]{30,})(?![A-Za-z0-9_-])"
+  },
+  {
+    "name": "AWS access key ID",
+    "type": "SECRET",
+    "regex": "(?<![A-Z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Z0-9])"
+  },
+  {
+    "name": "Private key",
+    "type": "SECRET",
+    "regex": "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+  },
+  {
+    "name": "Bearer credential",
+    "type": "SECRET",
+    "regex": "(?i)\\bBearer[ \\t]+(?P<value>[A-Za-z0-9._~+/-]{8,}=*)",
+    "value_group": "value"
+  },
+  {
+    "name": "Password or assigned secret",
+    "type": "SECRET",
+    "regex": "(?i)\\b(?:password|passwd|pwd|api[_-]?key|access[_-]?token|client[_-]?secret|пароль)[ \\t]*[=:][ \\t]*[\"']?(?P<value>[^\\s\"',;}{]{4,})",
+    "value_group": "value"
+  },
+  {
+    "name": "JWT",
+    "type": "SECRET",
+    "regex": "(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(?![A-Za-z0-9_-])"
+  },
+  {
+    "name": "Payment card",
+    "type": "CARD",
+    "regex": "(?<![\\d-])(?:\\d[ -]?){12,18}\\d(?![ -]?\\d)",
+    "validator": "luhn"
+  },
+  {
+    "name": "Russian bank account",
+    "type": "ACCOUNT",
+    "regex": "(?i)(?:\\b(?:р\\s*/\\s*с|к\\s*/\\s*с|расчетный счет|расчётный счёт|счет|счёт|account))[ \\t:№=-]*(?P<value>\\d{20})(?!\\d)",
+    "value_group": "value"
+  },
+  {
     "name": "Email",
     "type": "EMAIL",
     "regex": "(?<![\\w.-])[\\w.+-]+@(?:[\\w-]+\\.)+[A-Za-z]{2,}(?![\\w-])"

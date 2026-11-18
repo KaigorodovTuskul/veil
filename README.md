@@ -6,9 +6,36 @@
 
 <p align="center"><strong>Local. Portable. Cautious by default.</strong></p>
 
-Lightweight, local, interactive document anonymizer for Windows, Linux, and macOS. Veil replaces names, surnames, organizations, locations, addresses, contacts, and other PII before a document is sent to an LLM or another external service.
+Lightweight, local document anonymizer and privacy proxy for Windows, Linux, and macOS. Veil replaces names, organizations, contacts, credentials and other detected sensitive values before they are sent to an LLM.
 
-There is no GUI, cloud service, Node.js, or local LLM. The core is Python; the default workflow is a folder and one launcher command.
+There is no GUI, hosted service, Node.js, or local LLM. The core is Python; use the existing folder workflow or a local proxy for a terminal agent.
+
+## Local agent privacy proxy
+
+Keep source files local and filter text between the agent harness and model API:
+
+```text
+local files → local harness → Veil (mask) → cloud LLM
+local tools ← local harness ← Veil (restore) ← response
+```
+
+Set `VEIL_UPSTREAM_API_KEY` securely in the proxy terminal, then:
+
+```powershell
+$env:VEIL_UPSTREAM_BASE_URL = "https://api.anthropic.com"
+uv run python anonymize.py --proxy
+# Portable Windows: run_cmd.bat --proxy
+```
+
+Veil listens on `127.0.0.1:8765` and creates a private client token in
+`config/proxy_token`. Point the agent's base URL at Veil and give it that local
+token. JSON and streaming text/tool calls are supported for Chat Completions,
+Responses and Anthropic Messages. Unsupported content and inspection failures
+are blocked, never silently forwarded. Mappings stay in request memory.
+
+See the [setup guide, client examples and security boundaries](docs/proxy.md).
+Automatic detection is best-effort; a proxy does not restrict the agent's own
+network access or make confidential business content anonymous.
 
 ![Veil workflow preview](assets/veil-demo.svg)
 
@@ -202,7 +229,9 @@ Compress-Archive -Path dist\anonymizer\* -DestinationPath dist\Veil-windows-x64.
 ```powershell
 uv sync --locked
 uv run python anonymize.py --self-test
-uv run python -m py_compile anonymize.py extractors.py i18n.py
+uv run python -m unittest discover -s tests -v
+uv run python tests/benchmark.py
+uv run python -m py_compile anonymize.py extractors.py i18n.py veil_proxy.py veil_protocol.py
 git diff --check
 ```
 
@@ -212,6 +241,8 @@ If `uv` is unavailable, use the Python executable from `.venv` instead. The repo
 
 ```text
 anonymize.py          cross-platform CLI, auto mode, and restore mode
+veil_proxy.py         local HTTP privacy proxy and client authentication
+veil_protocol.py      request policy, shared mappings and JSON/SSE restoration
 extractors.py         TXT/JSON/CSV/DOC/DOCX/RTF/PDF extraction
 i18n.py               Russian, English, and Simplified Chinese UI
 patterns.json         configurable detection rules
@@ -233,4 +264,4 @@ See [`SECURITY.md`](SECURITY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`CH
 
 ## License
 
-No license has been selected yet. Add the license that matches the intended use before treating the repository as a distributable open-source project.
+MIT — see [LICENSE](LICENSE).

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a loopback-only privacy proxy for text requests to Chat Completions, Responses and Anthropic Messages APIs, including JSON/SSE tool-call restoration.
+- Proxy checks fail closed; unsupported paths, attachments, provider-side state and opaque content are blocked.
+- Provider credentials stay in the proxy; local client authentication is required. Mappings stay in request memory and payloads are not logged.
+- Added provider credentials, private keys, JWTs, payment cards with Luhn checks and contextual bank accounts to detection rules.
+- Fixed Unicode restoration, overlapping match coverage and literal placeholder collisions; compiled rules are reused.
+- Added synthetic integration tests and cross-platform CI.
 - Added optional local user dictionaries for keywords and ignored phrases.
 - User dictionary matching is case-insensitive and supports aliases without new dependencies.
 

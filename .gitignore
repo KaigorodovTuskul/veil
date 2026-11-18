@@ -23,6 +23,7 @@ check.bat
 # Local user dictionaries; only templates are tracked
 config/user_keywords.csv
 config/ignore_keywords.txt
+config/proxy_token
 
 # User documents and generated results
 input/*

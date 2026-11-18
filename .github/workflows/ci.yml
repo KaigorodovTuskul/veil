@@ -5,6 +5,20 @@ on:
   pull_request:
 
 jobs:
+  privacy-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt
+      - run: python anonymize.py --self-test
+      - run: python -m unittest discover -s tests -v
+
   test-and-build:
     runs-on: windows-latest
 
@@ -27,7 +41,7 @@ jobs:
         run: uv run python anonymize.py --self-test
 
       - name: Compile sources
-        run: uv run python -m py_compile anonymize.py extractors.py i18n.py
+        run: uv run python -m py_compile anonymize.py extractors.py i18n.py veil_proxy.py veil_protocol.py
 
       - name: Build portable package
         shell: powershell

@@ -51,7 +51,18 @@ LEGAL_FORM_PATTERN = re.compile(r"(?i)(?<![\w-])(?:ООО|АО|ПАО|ОАО|З�
 
 def load_rules() -> list[dict[str, Any]]:
     with (SCRIPT_DIR / "patterns.json").open(encoding="utf-8") as file:
-        return json.load(file)
+        rules = json.load(file)
+    for rule in rules:
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", rule["type"]):
+            raise ValueError("Invalid detection rule type")
+        rule["_compiled"] = re.compile(rule["regex"], MATCH_FLAGS)
+        if rule["_compiled"].match(""):
+            raise ValueError("Detection rules must not match empty text")
+        if rule.get("validator") not in {None, "luhn"}:
+            raise ValueError("Unknown detection validator")
+        if rule.get("value_group") and rule["value_group"] not in rule["_compiled"].groupindex:
+            raise ValueError("Unknown value_group in detection rule")
+    return rules
 
 
 def _normal_form(value: str) -> str:
@@ -114,13 +125,14 @@ def write_text(path: Path, text: str, encoding: str) -> None:
 
 
 def find_candidates(text: str, rules: list[dict[str, Any]], user_keywords: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    original = text
     text = text.translate(str.maketrans({"\u00a0": " ", "\u200b": " ", "\ufeff": " ", "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-"}))
     candidates: list[dict[str, Any]] = []
     user_keywords = user_keywords or {"entries": (), "ignored": set()}
     for entry in user_keywords["entries"]:
         for pattern in entry["patterns"]:
             for match in pattern.finditer(text):
-                value = match.group(0)
+                value = original[match.start():match.end()]
                 if _normal_form(value) not in user_keywords["ignored"]:
                     candidates.append({
                         "start": match.start(),
@@ -132,10 +144,16 @@ def find_candidates(text: str, rules: list[dict[str, Any]], user_keywords: dict[
                         "key": _normal_form(entry["keyword"]),
                     })
     for priority, rule in enumerate(rules):
-        for match in re.compile(rule["regex"], MATCH_FLAGS).finditer(text):
+        pattern = rule.get("_compiled") or re.compile(rule["regex"], MATCH_FLAGS)
+        for match in pattern.finditer(text):
             group = rule.get("value_group")
             start, end = match.span(group or 0)
             value = text[start:end]
+            if rule.get("validator") == "luhn":
+                digits = [int(char) for char in value if char.isascii() and char.isdigit()]
+                doubled = [digit * 2 - 9 if digit * 2 > 9 else digit * 2 for digit in digits[-2::-2]]
+                if not 13 <= len(digits) <= 19 or len(set(digits)) == 1 or (sum(digits[-1::-2]) + sum(doubled)) % 10:
+                    continue
             if rule["type"] == "ORGANIZATION":
                 legal_forms = list(LEGAL_FORM_PATTERN.finditer(value))
                 if legal_forms and legal_forms[-1].start() > 0:
@@ -157,19 +175,29 @@ def find_candidates(text: str, rules: list[dict[str, Any]], user_keywords: dict[
                 candidates.append({
                     "start": start,
                     "end": end,
-                    "value": value,
+                    "value": original[start:end],
                     "type": rule["type"],
                     "name": rule["name"],
                     "priority": priority,
                 })
 
+    return _select_candidates(original, candidates)
+
+
+def _select_candidates(text: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
     selected: list[dict[str, Any]] = []
     for candidate in candidates:
-        if any(candidate["start"] < other["end"] and other["start"] < candidate["end"] for other in selected):
-            continue
-        selected.append(candidate)
-    return sorted(selected, key=lambda item: item["start"])
+        if selected and candidate["start"] < selected[-1]["end"]:
+            previous = selected[-1]
+            if candidate["end"] > previous["end"]:
+                # Mask the union: dropping an overlap would expose its uncovered suffix.
+                previous["end"] = candidate["end"]
+                previous["value"] = text[previous["start"]:previous["end"]]
+                previous.pop("key", None)
+        else:
+            selected.append(dict(candidate))
+    return selected
 
 
 def context(text: str, start: int, end: int, width: int = 55) -> str:
@@ -199,13 +227,7 @@ def ask(candidate: dict[str, Any], text: str) -> str:
 
 def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, Any], ...] = (), auto: bool = False, token_prefix: str = "", user_keywords: dict[str, Any] | None = None) -> tuple[str, dict[str, str], int, list[tuple[int, int, str]]]:
     candidates = find_candidates(text, rules, user_keywords) + list(marked)
-    candidates.sort(key=lambda item: (item["start"], -(item["end"] - item["start"]), item["priority"]))
-    selected: list[dict[str, Any]] = []
-    for candidate in candidates:
-        if any(candidate["start"] < other["end"] and other["start"] < candidate["end"] for other in selected):
-            continue
-        selected.append(candidate)
-    candidates = selected
+    candidates = _select_candidates(text, candidates)
     replacements: dict[Any, str] = {}
     original_values: dict[Any, str] = {}
     decisions: dict[Any, str] = {}
@@ -224,6 +246,8 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
         if decisions[key] == "replace":
             if token is None:
                 token = token_for(candidate["type"], counters, token_prefix)
+                while token in text:
+                    token = token_for(candidate["type"], counters, token_prefix)
                 replacements[key] = token
                 original_values[key] = candidate["value"]
             changes.append((candidate["start"], candidate["end"], token))
@@ -234,9 +258,10 @@ def anonymize(text: str, rules: list[dict[str, Any]], marked: tuple[dict[str, An
 
 
 def restore(text: str, mapping: dict[str, str]) -> str:
-    for token, value in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
-        text = text.replace(token, value)
-    return text
+    if not mapping:
+        return text
+    pattern = re.compile("|".join(re.escape(token) for token in sorted(mapping, key=len, reverse=True)))
+    return pattern.sub(lambda match: mapping[match.group()], text)
 
 
 def output_path(path: Path, suffix: str) -> Path:
@@ -376,6 +401,10 @@ def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    if "--proxy" in sys.argv[1:]:
+        from veil_proxy import main as proxy_main
+
+        return proxy_main([argument for argument in sys.argv[1:] if argument != "--proxy"])
     bootstrap = argparse.ArgumentParser(add_help=False)
     bootstrap.add_argument("--lang", choices=LANGUAGES)
     bootstrap_args, _ = bootstrap.parse_known_args()
