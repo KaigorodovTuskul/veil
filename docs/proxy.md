@@ -78,6 +78,8 @@ and a conservative 16 MiB allocation budget. Earlier placeholders remain
 restorable when the model reuses them from encrypted reasoning. Unknown, expired,
 evicted, oversized or pre-existing opaque history is
 blocked. After restarting Veil or exhausting this cache, start a new session.
+Expiry is checked on cache access: idle entries may remain in process memory
+until the next access or process exit; this is not a timed secure-erasure promise.
 Locally encrypted input that Veil has never observed cannot be inspected and is
 blocked. Images, file uploads, hosted tools and remote compaction remain blocked.
 
