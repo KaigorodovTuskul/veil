@@ -5,6 +5,8 @@ No real model is called; the mock asks the CLI to read one temporary text file.
 """
 
 import argparse
+import base64
+import datetime
 import json
 import os
 import re
@@ -27,14 +29,28 @@ class Provider(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def do_GET(self):
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"error":"Mock supports only inference"}')
+
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if not self.path.endswith(("/responses", "/messages", "/chat/completions")):
+            self.do_GET()
+            return
         payload = json.loads(raw)
         self.server.calls += 1
         self.server.leaked |= any(value in raw for value in (b"test@example.com", b"synthetic-private-password"))
         tokens = re.findall(r"\{\{VEIL_[A-Za-z0-9_]*EMAIL_[0-9]+\}\}", raw.decode())
         text = "hello " + (tokens[-1] if tokens else "no email token")
         tools = payload.get("tools", [])
+        for item in payload.get("input", []) if isinstance(payload.get("input"), list) else []:
+            if isinstance(item, dict) and item.get("type") == "additional_tools":
+                tools = tools + item.get("tools", [])
+        if getattr(self.server, "subscription", False):
+            self.server.auth_valid &= self.headers.get("Authorization") == "Bearer synthetic-subscription-session" and self.headers.get("ChatGPT-Account-ID") == "account-synthetic" and self.headers.get("X-Veil-Token") is None
         selected = None
         for tool in tools:
             function = tool.get("function", tool)
@@ -77,6 +93,15 @@ class Provider(BaseHTTPRequestHandler):
                 item = {"id": "msg_mock", "type": "message", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": text, "annotations": []}]}
             response = {"id": "resp_mock", "object": "response", "created_at": 0, "status": "completed", "model": payload["model"], "output": [item], "usage": {"input_tokens": 10, "output_tokens": 10, "total_tokens": 20}}
             frames = [{"type": "response.created", "response": {**response, "status": "in_progress", "output": []}}, {"type": "response.output_item.added", "output_index": 0, "item": {**item, "status": "in_progress"}}, {"type": "response.output_item.done", "output_index": 0, "item": item}, {"type": "response.completed", "response": response}]
+            if self.server.subscription and use_tool:
+                reasoning = {"type": "reasoning", "id": "rs_mock", "summary": [], "content": None, "encrypted_content": "opaque-reasoning-from-mock"}
+                response["output"].insert(0, reasoning)
+                frames[1]["output_index"] = frames[2]["output_index"] = 1
+                frames.insert(1, {"type": "response.output_item.done", "output_index": 0, "item": reasoning})
+            if getattr(self.server, "subscription", False):
+                reasoning = {"type": "reasoning", "id": "rs_mock", "summary": [], "encrypted_content": "opaque-synthetic-reasoning"}
+                frames.insert(1, {"type": "response.output_item.done", "output_index": 1, "item": reasoning})
+                response["output"].insert(0, reasoning)
         else:
             delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_mock", "type": "function", "function": {"name": selected[0], "arguments": json.dumps(selected[1])}}]} if use_tool else {"role": "assistant", "content": text}
             base = {"id": "chat_mock", "object": "chat.completion.chunk", "created": 0, "model": payload["model"]}
@@ -94,7 +119,10 @@ class Provider(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client", choices=("codex", "claude", "opencode"))
+    parser.add_argument("--codex-chatgpt", action="store_true", help="Test subscription auth using synthetic ChatGPT credentials and a loopback mock")
     args = parser.parse_args()
+    if args.codex_chatgpt and args.client != "codex":
+        parser.error("--codex-chatgpt requires the codex client")
     executable = shutil.which(args.client)
     if not executable:
         parser.error("Install the selected CLI first")
@@ -103,6 +131,10 @@ def main():
         native = Path(executable).parent / "node_modules" / "@opencode" / "cli" / "bin" / "opencode.exe"
         if native.exists():
             executable = str(native)
+    if os.name == "nt" and args.client == "codex":
+        binaries = list(Path(executable).parent.glob("node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex.exe"))
+        if binaries:
+            executable = str(binaries[0])
     with tempfile.TemporaryDirectory(prefix="veil-cli-") as directory:
         root = Path(directory)
         sample = root / "synthetic.txt"
@@ -111,7 +143,8 @@ def main():
         provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
         provider.daemon_threads = True
         provider.sample, provider.calls, provider.tool_turns, provider.leaked = str(sample), 0, 0, False
-        proxy = ProxyServer(("127.0.0.1", 0), f"http://127.0.0.1:{provider.server_port}", "synthetic-provider", "synthetic-local", load_rules(), {"entries": (), "ignored": set()}, timeout=10)
+        provider.subscription, provider.auth_valid = args.codex_chatgpt, True
+        proxy = ProxyServer(("127.0.0.1", 0), f"http://127.0.0.1:{provider.server_port}", "synthetic-provider", "synthetic-local", load_rules(), {"entries": (), "ignored": set()}, timeout=10, codex_chatgpt=args.codex_chatgpt)
         for server in (provider, proxy):
             threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         env = {key: value for key, value in os.environ.items() if key.upper() in {"SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PATH", "TEMP", "TMP", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROGRAMFILES", "PROGRAMFILES(X86)"}}
@@ -122,9 +155,22 @@ def main():
             config = root / "codex"
             config.mkdir()
             env["CODEX_HOME"] = str(config)
-            (config / "config.toml").write_text(f'model="mock"\nmodel_provider="veil"\nweb_search="disabled"\napproval_policy="never"\n[model_providers.veil]\nname="Veil"\nbase_url="{base}/v1"\nenv_key="VEIL_PROXY_TOKEN"\nwire_api="responses"\nsupports_websockets=false\nrequest_max_retries=0\nstream_max_retries=0\n', encoding="utf-8")
+            authentication = 'requires_openai_auth=true\nenv_http_headers={"X-Veil-Token"="VEIL_PROXY_TOKEN"}' if args.codex_chatgpt else 'env_key="VEIL_PROXY_TOKEN"'
+            (config / "config.toml").write_text(f'model="mock"\nmodel_provider="veil"\nchatgpt_base_url="http://127.0.0.1:{provider.server_port}"\nweb_search="disabled"\napproval_policy="never"\n[model_providers.veil]\nname="Veil"\nbase_url="{base}/v1"\n{authentication}\nwire_api="responses"\nsupports_websockets=false\nrequest_max_retries=0\nstream_max_retries=0\n', encoding="utf-8")
+            if args.codex_chatgpt:
+                template = Path(__file__).resolve().parents[1] / "config" / "codex-chatgpt.config.toml.example"
+                profile = template.read_text(encoding="utf-8").replace("http://127.0.0.1:8765", base)
+                (config / "veil-chatgpt.config.toml").write_text(profile, encoding="utf-8")
+                (config / "config.toml").write_text(f'model="mock"\nchatgpt_base_url="http://127.0.0.1:{provider.server_port}"\napproval_policy="never"\n', encoding="utf-8")
+                claims = {"exp": 4102444800, "email": "synthetic@example.invalid", "https://api.openai.com/auth": {"chatgpt_account_id": "account-synthetic", "chatgpt_user_id": "user-synthetic", "chatgpt_plan_type": "plus"}}
+                encoded = base64.urlsafe_b64encode(json_bytes(claims)).decode().rstrip("=")
+                id_token = "eyJhbGciOiJub25lIn0." + encoded + ".synthetic"
+                auth = {"auth_mode": "chatgpt", "tokens": {"id_token": id_token, "access_token": "synthetic-subscription-session", "refresh_token": "synthetic-refresh", "account_id": "account-synthetic"}, "last_refresh": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")}
+                (config / "auth.json").write_bytes(json_bytes(auth))
             # Only our fixed mock command reads our temporary file; no real model chooses commands.
             command = [executable, "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-rules", "--sandbox", "danger-full-access", "--json", prompt]
+            if args.codex_chatgpt:
+                command[2:2] = ["--profile", "veil-chatgpt", "-c", "model_providers.veil_chatgpt.request_max_retries=0", "-c", "model_providers.veil_chatgpt.stream_max_retries=0"]
         elif args.client == "claude":
             env.update({"CLAUDE_CONFIG_DIR": directory, "ANTHROPIC_API_KEY": "synthetic-local", "ANTHROPIC_BASE_URL": base, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "MAX_THINKING_TOKENS": "0", "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"})
             command = [executable, "--bare", "-p", prompt, "--model", "claude-sonnet-4-6", "--system-prompt", "Synthetic offline test.", "--tools", "Read", "--allowedTools", "Read", "--no-session-persistence", "--output-format", "json", "--max-turns", "3"]
@@ -134,8 +180,8 @@ def main():
             command = [executable, "--standalone", "run", "--format", "json", prompt]
         try:
             result = subprocess.run(command, cwd=root, env=env, input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
-            passed = result.returncode == 0 and "hello test@example.com" in result.stdout and provider.tool_turns >= 1 and not provider.leaked and sample.read_bytes() == original
-            print(json.dumps({"client": args.client, "passed": passed, "returncode": result.returncode, "provider_calls": provider.calls, "tool_turns": provider.tool_turns, "original_reached_provider": provider.leaked, "stdout_tail": result.stdout[-2000:] if not passed else None, "stderr_tail": result.stderr[-1000:] if not passed else None}, ensure_ascii=False, indent=2))
+            passed = result.returncode == 0 and "hello test@example.com" in result.stdout and provider.tool_turns >= 1 and not provider.leaked and provider.auth_valid and sample.read_bytes() == original
+            print(json.dumps({"client": args.client, "subscription_auth": args.codex_chatgpt, "passed": passed, "returncode": result.returncode, "provider_calls": provider.calls, "tool_turns": provider.tool_turns, "original_reached_provider": provider.leaked, "auth_forwarding_valid": provider.auth_valid, "stdout_tail": result.stdout[-2000:] if not passed else None, "stderr_tail": result.stderr[-1000:] if not passed else None}, ensure_ascii=False, indent=2))
             return 0 if passed else 1
         finally:
             for server in (proxy, provider):

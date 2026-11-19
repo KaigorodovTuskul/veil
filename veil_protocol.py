@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+from collections.abc import Callable
 from typing import Any
 
 from anonymize import apply_changes, find_candidates
@@ -135,7 +136,7 @@ def _validate_messages(messages: Any) -> None:
             raise PolicyError("Message content is required")
 
 
-def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
+def mask_request(path: str, payload: Any, session: MaskingSession, *, trusted_reasoning: Callable[[str], bool] | None = None) -> dict:
     if path not in REQUEST_FIELDS or not isinstance(payload, dict):
         raise PolicyError("Unsupported API path or request object")
     if payload.keys() - REQUEST_FIELDS[path]:
@@ -154,6 +155,7 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
         raise PolicyError("thinking must be an object")
     if payload.get("thinking", {}).get("type", "disabled") != "disabled":
         raise PolicyError("Extended thinking is not supported; disable it in the client")
+    tool_collections = [payload.get("tools", [])]
     if path == "/v1/responses":
         items = payload.get("input")
         if isinstance(items, str):
@@ -167,6 +169,16 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
                     if item.keys() - {"type", "role", "content", "id", "status"}:
                         raise PolicyError("Unknown message input fields are blocked")
                     _validate_content(item.get("content"))
+                elif kind == "agent_message":
+                    if item.keys() - {"type", "id", "author", "recipient", "content", "internal_chat_message_metadata_passthrough"}:
+                        raise PolicyError("Unknown agent message fields are blocked")
+                    if not isinstance(item.get("author"), str) or not isinstance(item.get("recipient"), str):
+                        raise PolicyError("Agent messages require author and recipient")
+                    _validate_content(item.get("content"))
+                elif kind == "additional_tools":
+                    if item.keys() - {"type", "id", "role", "tools"}:
+                        raise PolicyError("Unknown additional tool fields are blocked")
+                    tool_collections.append(item.get("tools"))
                 elif kind in {"function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output"}:
                     if item.keys() - {"type", "id", "call_id", "name", "namespace", "arguments", "input", "output", "status"}:
                         raise PolicyError("Unknown tool input fields are blocked")
@@ -175,10 +187,15 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
                     elif kind == "custom_tool_call" and not isinstance(item.get("input"), str):
                         raise PolicyError("Custom tool input must be text")
                 elif kind == "reasoning":
-                    if item.keys() - {"type", "id", "summary", "content", "status", "encrypted_content"} or item.get("encrypted_content"):
-                        raise PolicyError("Opaque reasoning is blocked; start a fresh text-only session")
+                    encrypted = item.get("encrypted_content")
+                    if item.keys() - {"type", "id", "summary", "content", "status", "encrypted_content"} or encrypted is not None and not isinstance(encrypted, str):
+                        raise PolicyError("Invalid reasoning item")
+                    if encrypted and (trusted_reasoning is None or not trusted_reasoning(encrypted)):
+                        raise PolicyError("Unknown or expired opaque reasoning is blocked; start a fresh session through Veil")
                     for field in ("summary", "content"):
                         blocks = item.get(field, [])
+                        if field == "content" and blocks is None:
+                            continue
                         if not isinstance(blocks, list) or any(not isinstance(block, dict) or block.keys() - {"type", "text"} or block.get("type") not in {"summary_text", "reasoning_text", "text"} or not isinstance(block.get("text"), str) for block in blocks):
                             raise PolicyError("Only plain-text reasoning is supported")
                 else:
@@ -202,7 +219,8 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
             elif tool.get("type", "function") not in {"function", "custom"}:
                 raise PolicyError("Only client-executed function tools are supported")
 
-    validate_tools(payload.get("tools", []))
+    for collection in tool_collections:
+        validate_tools(collection)
 
     def walk(value: Any, field: str = "", data: bool = False, schema: bool = False) -> Any:
         if isinstance(value, dict):
@@ -220,6 +238,8 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
         if isinstance(value, list):
             return [walk(child, field, data, schema) for child in value]
         if isinstance(value, str):
+            if field == "encrypted_content" and value and trusted_reasoning is not None and trusted_reasoning(value):
+                return value
             if field == "arguments" and not data and not schema:
                 return json_bytes(walk(json_loads(value), data=True)).decode("utf-8")
             if field in {"output", "content", "text"} and value.lstrip().startswith(("{", "[")):
@@ -230,8 +250,8 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
                 else:
                     return json_bytes(walk(decoded, data=True)).decode("utf-8")
             masked = session.mask(value)
-            if not data and field in {"model", "role", "type", "name", "namespace", "id", "call_id", "tool_call_id", "tool_use_id"} and masked != value:
-                raise PolicyError("Sensitive protocol identifiers cannot be forwarded safely")
+            if not data and field in {"model", "role", "type", "name", "namespace", "id", "call_id", "tool_call_id", "tool_use_id", "author", "recipient"} and masked != value:
+                raise PolicyError(f"Sensitive protocol identifier ({field}) cannot be forwarded safely")
             return masked
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             if session.mask(str(value)) != str(value):
@@ -242,8 +262,9 @@ def mask_request(path: str, payload: Any, session: MaskingSession) -> dict:
     walk(payload)
     session.seal()
     result = walk(payload)
-    # Clients can request encrypted reasoning by default; never ask upstream to create opaque state.
-    result.pop("include", None)
+    # Opaque replay is opt-in and requires previously observed provider output.
+    if trusted_reasoning is None:
+        result.pop("include", None)
     if path != "/v1/messages":
         result["store"] = False
     return result
@@ -307,7 +328,7 @@ def restore_response(value: Any, mapping: dict[str, str] | Restoration) -> Any:
 class SSEProcessor:
     """Restore independent API text/tool streams while preserving SSE event order."""
 
-    def __init__(self, path: str, mapping: dict[str, str]):
+    def __init__(self, path: str, mapping: dict[str, str], *, observer: Callable[[dict], None] | None = None):
         self.path = path
         self.restoration = Restoration(mapping)
         self.streams: dict[tuple, StreamRestorer] = {}
@@ -316,6 +337,7 @@ class SSEProcessor:
         self.terminal = False
         self.chat_seen: set[int] = set()
         self.chat_finished: set[int] = set()
+        self.observer = observer
 
     def encode(self, payload: dict) -> bytes:
         if "sequence_number" in payload:
@@ -350,6 +372,8 @@ class SSEProcessor:
         lines = event.decode("utf-8").splitlines()
         data = "\n".join(line[5:].lstrip(" ") for line in lines if line.startswith("data:"))
         if not data:
+            if any(line and not line.startswith((":", "event:", "id:", "retry:")) for line in lines):
+                raise PolicyError("Invalid SSE framing")
             return event
         if self.terminal:
             raise PolicyError("SSE data after terminal event")
@@ -361,6 +385,12 @@ class SSEProcessor:
         payload = json_loads(data)
         if not isinstance(payload, dict):
             raise PolicyError("Unsupported SSE data")
+        if self.path == "/v1/responses":
+            kind = payload.get("type", "")
+            if not isinstance(kind, str) or not (kind.startswith("response.") or kind in {"error", "responsesapi.websocket_timing"}):
+                raise PolicyError("Unsupported Responses SSE event")
+        if self.observer is not None:
+            self.observer(payload)
         output = []
 
         def transform(container: dict, field: str, key: tuple, json_fragment: bool = False, final: bool = False) -> None:
@@ -409,8 +439,8 @@ class SSEProcessor:
                     self.terminal = True
         else:
             kind = payload.get("type", "")
-            if kind in {"response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta"}:
-                key = (payload.get("output_index", 0), payload.get("content_index", 0), kind)
+            if kind in {"response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+                key = (payload.get("output_index", 0), payload.get("content_index", payload.get("summary_index", 0)), kind)
                 transform(payload, "delta", key, "arguments" in kind)
             else:
                 payload = restore_response(payload, self.restoration)

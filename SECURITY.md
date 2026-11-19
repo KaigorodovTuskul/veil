@@ -11,6 +11,8 @@ Veil is a local preprocessing tool and text-only LLM privacy proxy. It is not a 
 - Names removed from a document do not hide confidential financial results, inventions or identity inferred from context.
 - Review custom rules and ignore lists. Restart the proxy after changes.
 - The server is for a trusted local user; do not publish it through a tunnel or shared ingress. Local processes with the same account may be able to read its token and memory.
+- In `--codex-chatgpt` mode, Codex retains sign-in/refresh ownership. Its bearer and account ID go only to the fixed ChatGPT service (or an explicit loopback test server); the separate `X-Veil-Token` never goes upstream.
+- Encrypted reasoning is accepted only after observation through this proxy for the same account. The cache stores hashes, expires after 30 idle minutes and holds at most 1024 entries. Restarting Veil requires a fresh session; unknown opaque input is blocked.
 
 See [docs/proxy.md](docs/proxy.md) for supported protocols, limits and setup.
 

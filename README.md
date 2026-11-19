@@ -27,6 +27,16 @@ uv run python anonymize.py --proxy
 # Portable Windows: run_cmd.bat --proxy
 ```
 
+For **Codex signed in with ChatGPT**, no provider API key is required:
+
+```powershell
+uv run python anonymize.py --proxy --codex-chatgpt
+```
+
+Use the [ChatGPT subscription setup and separate Codex profile](docs/proxy.md#codex-with-your-chatgpt-subscription-no-api-key).
+Codex keeps control of sign-in and refresh; Veil forwards credentials only to the
+fixed ChatGPT service and requires a separate local token.
+
 Veil listens on `127.0.0.1:8765` and creates a private client token in
 `config/proxy_token`. Point the agent's base URL at Veil and give it that local
 token. JSON and streaming text/tool calls are supported for Chat Completions,

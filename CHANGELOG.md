@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `--codex-chatgpt` for Codex subscription sign-in without a provider API key, with a separate local credential and a pinned upstream.
+- Added account-bound, bounded reasoning replay provenance, Responses Lite plaintext inputs, and validated subscription SSE responses without Content-Type.
+- Added an isolated synthetic subscription CLI smoke and a selectable Codex profile template.
 - Added a loopback-only privacy proxy for text requests to Chat Completions, Responses and Anthropic Messages APIs, including JSON/SSE tool-call restoration.
 - Proxy checks fail closed; unsupported paths, attachments, provider-side state and opaque content are blocked.
 - Provider credentials stay in the proxy; local client authentication is required. Mappings stay in request memory and payloads are not logged.

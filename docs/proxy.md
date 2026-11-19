@@ -10,7 +10,74 @@ facts must stay private: business terms and financial results may be confidentia
 even after every name has been removed. Add organization-specific terms to
 `config/user_keywords.csv` and test synthetic examples before real documents.
 
-## Start the proxy
+## Codex with your ChatGPT subscription (no API key)
+
+This mode uses your existing `codex login` session. Codex owns sign-in and token
+refresh; Veil never reads or copies `auth.json`. Verified with Codex CLI 0.165.0.
+
+In the first PowerShell terminal:
+
+```powershell
+cd G:\python_projects\veil
+uv sync --locked
+codex login status
+# If signed out: codex login
+uv run python anonymize.py --proxy --codex-chatgpt
+```
+
+Keep that terminal running. No `VEIL_UPSTREAM_API_KEY` is needed. The upstream is
+fixed to the ChatGPT Codex service. This mode ignores `VEIL_UPSTREAM_BASE_URL`;
+an explicit `--upstream` may select only that same service or a loopback mock.
+
+Save [config/codex-chatgpt.config.toml.example](../config/codex-chatgpt.config.toml.example)
+as `veil-chatgpt.config.toml` in your Codex home directory (normally
+`$HOME/.codex`; use `$CODEX_HOME` if set). This adds a selectable profile and leaves
+your regular `config.toml` unchanged. Inspect an existing profile before replacing
+it. The profile keeps your selected model and supplies:
+
+```toml
+model_provider = "veil_chatgpt"
+web_search = "disabled"
+
+[model_providers.veil_chatgpt]
+name = "Veil ChatGPT"
+base_url = "http://127.0.0.1:8765/v1"
+requires_openai_auth = true
+wire_api = "responses"
+supports_websockets = false
+env_http_headers = { "X-Veil-Token" = "VEIL_PROXY_TOKEN" }
+```
+
+In a second PowerShell terminal:
+
+```powershell
+cd G:\python_projects\veil
+$env:VEIL_PROXY_TOKEN = (Get-Content -Raw config/proxy_token).Trim()
+codex --profile veil-chatgpt
+```
+
+Start a fresh text-only session. Codex sends its ChatGPT bearer/account headers
+and the separate `X-Veil-Token` local credential. Veil strips the local credential
+before forwarding. A bad local token returns 403, without asking Codex to refresh
+its cloud session. Provider 401 responses still reach Codex for normal recovery.
+Subscription eligibility and limits remain those of your ChatGPT account.
+
+Plaintext Responses Lite `agent_message` and `additional_tools` inputs are
+inspected too. Encrypted reasoning is accepted **only if that exact ciphertext
+was previously received from the provider through Veil for the same account**.
+Only its digest is cached, for 30 minutes of inactivity, with a maximum of 1024
+entries. Unknown, expired, cross-account or pre-existing opaque history is
+blocked. After restarting Veil or exhausting this cache, start a new session.
+Locally encrypted input that Veil has never observed cannot be inspected and is
+blocked. Images, file uploads, hosted tools and remote compaction remain blocked.
+
+The ChatGPT service may omit `Content-Type` on streaming responses. Veil accepts
+that only for an explicitly streaming subscription request and validates SSE
+before sending response headers. It does not forward cookies or copy your login
+tokens to disk. Agent sandbox permissions are independent of the proxy; Veil does
+not relax them or grant file access.
+
+## Start the proxy with a provider API key
 
 Install the existing Python dependencies (`uv sync --locked`), then use a terminal
 dedicated to the proxy. You need an API credential accepted by the upstream;
@@ -80,7 +147,7 @@ provider-executed tools are blocked. API clients that send both authorization
 and `x-api-key` must be configured to use only one local credential header.
 The SDK's `/v1/messages?beta=true` route is accepted as `/v1/messages`.
 
-### Codex / Responses
+### Codex / Responses with an API key
 
 Point a separate Veil instance upstream at `https://api.openai.com`, then configure
 a custom provider in the client's configuration:
@@ -101,6 +168,7 @@ Keep your chosen model setting. Use text-only full-history sessions. Veil forces
 `store=false` and removes the request for encrypted reasoning output. Requests
 that replay encrypted reasoning, item references, `previous_response_id` or a
 provider conversation are rejected; the proxy cannot inspect that hidden context.
+For ChatGPT subscription sign-in, use the separate mode and profile above.
 Remote compaction and hosted web search are not supported. Protocol tests cover
 Responses text/tool/SSE exchanges; CLI-specific capabilities depend on the client
 release and must be verified before use with private files.
@@ -165,6 +233,7 @@ Optional checks of installed CLI binaries:
 
 ```text
 uv run python tests/cli_smoke.py codex
+uv run python tests/cli_smoke.py codex --codex-chatgpt
 uv run python tests/cli_smoke.py claude
 uv run python tests/cli_smoke.py opencode
 ```
@@ -177,6 +246,9 @@ source. The Codex check runs only the mock's fixed file-read command with sandbo
 disabled because a fresh temporary Windows profile has no configured sandbox;
 this does not alter your normal Codex settings. These checks do not verify cloud
 credentials, model quality or arbitrary CLI features.
+The `--codex-chatgpt` smoke uses synthetic cached sign-in in a temporary Codex
+home, not your account, and verifies bearer/account forwarding and reasoning
+replay without contacting OpenAI.
 
 ## Supported contract and failure behavior
 
@@ -185,7 +257,7 @@ credentials, model quality or arbitrary CLI features.
 | `POST /v1/chat/completions` | Text history, local function tools; JSON and SSE |
 | `POST /v1/responses` | Stateless text input, function calls/results; JSON and SSE |
 | `POST /v1/messages` | Text system/history, local tool inputs/results; JSON and SSE |
-| `GET /v1/models` | Authenticated provider model discovery |
+| `GET /v1/models` | Authenticated provider model discovery; subscription mode also accepts a numeric `client_version` query |
 | `GET /healthz`, `/readyz` | Authenticated local process health |
 | Other paths, query parameters or methods | Rejected; no blind passthrough |
 
@@ -201,8 +273,9 @@ Mappings exist in memory until that request completes, with no database or audit
 payload storage. Process dumps and local memory access remain sensitive.
 
 Unknown top-level/message/content fields are blocked. Binary/image/audio/file
-content, provider-side history and hosted tools are not inspected and cannot be
-sent through the proxy. Extract document text **locally** using Veil's existing
+content, unverified opaque history and hosted tools cannot be sent through the
+proxy. Subscription-mode reasoning replay uses the bounded provenance cache
+described above. Extract document text **locally** using Veil's existing
 file mode before including it in a prompt. Numeric JSON fields detected as
 sensitive are rejected rather than silently changing the tool's JSON types.
 

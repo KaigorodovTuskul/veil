@@ -1,0 +1,10 @@
+model_provider = "veil_chatgpt"
+web_search = "disabled"
+
+[model_providers.veil_chatgpt]
+name = "Veil ChatGPT"
+base_url = "http://127.0.0.1:8765/v1"
+requires_openai_auth = true
+wire_api = "responses"
+supports_websockets = false
+env_http_headers = { "X-Veil-Token" = "VEIL_PROXY_TOKEN" }

@@ -1,6 +1,7 @@
 """Synthetic regression tests; never call an external model."""
 
 import http.client
+import io
 import json
 import re
 import subprocess
@@ -11,11 +12,12 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from anonymize import _keyword_pattern, anonymize, find_candidates, load_rules, restore
 from veil_protocol import MaskingSession, PolicyError, SSEProcessor, StreamRestorer, json_bytes, json_loads, mask_request
-from veil_proxy import ProxyServer
+from veil_proxy import ProxyServer, ReasoningCache
 
 
 RULES = load_rules()
@@ -208,6 +210,11 @@ class ProtocolTests(unittest.TestCase):
 class MockProvider(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == "content-type" and getattr(self.server, "omit_content_type", False):
+            return
+        super().send_header(keyword, value)
 
     def do_GET(self):
         self.send_response(200)
@@ -403,6 +410,141 @@ class IntegrationTests(unittest.TestCase):
     def test_upstream_https_required(self):
         with self.assertRaises(ValueError):
             ProxyServer(("127.0.0.1", 0), "http://external.example", "key", "token", RULES, EMPTY_KEYWORDS)
+
+
+class ChatGPTTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.provider = ThreadingHTTPServer(("127.0.0.1", 0), MockProvider)
+        cls.provider.requests = []
+        cls.proxy = ProxyServer(("127.0.0.1", 0), f"http://127.0.0.1:{cls.provider.server_port}/backend-api/codex", "", "synthetic-local-token", RULES, EMPTY_KEYWORDS, timeout=3, codex_chatgpt=True)
+        cls.threads = [threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True) for server in (cls.provider, cls.proxy)]
+        for thread in cls.threads:
+            thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        for server in (cls.proxy, cls.provider):
+            server.shutdown()
+            server.server_close()
+        for thread in cls.threads:
+            thread.join(timeout=2)
+
+    def request(self, payload, headers=None, path="/v1/responses", method="POST"):
+        auth = {"Authorization": "Bearer synthetic-subscription-session", "ChatGPT-Account-ID": "account-synthetic", "X-Veil-Token": "synthetic-local-token", "Content-Type": "application/json"}
+        auth.update(headers or {})
+        auth = {key: value for key, value in auth.items() if value is not None}
+        connection = http.client.HTTPConnection("127.0.0.1", self.proxy.server_port, timeout=5)
+        connection.request(method, path, body=json_bytes(payload) if payload is not None else None, headers=auth)
+        response = connection.getresponse()
+        status, body = response.status, response.read()
+        connection.close()
+        return status, body
+
+    def test_subscription_auth_routing_and_restoration_json_and_sse(self):
+        for stream in (False, True):
+            status, body = self.request({"model": "mock", "input": "test@example.com", "stream": stream})
+            self.assertEqual(status, 200, body)
+            path, raw, headers = self.provider.requests[-1]
+            self.assertEqual(path, "/backend-api/codex/responses")
+            self.assertEqual(headers["Authorization"], "Bearer synthetic-subscription-session")
+            self.assertEqual(headers["ChatGPT-Account-ID"], "account-synthetic")
+            self.assertNotIn("X-Veil-Token", headers)
+            self.assertNotIn(b"test@example.com", raw)
+            if not stream:
+                self.assertIn("test@example.com", json.loads(body)["output"][0]["content"][0]["text"])
+
+    def test_missing_duplicate_or_wrong_credentials_never_forward(self):
+        before = len(self.provider.requests)
+        for headers in ({"X-Veil-Token": None}, {"X-Veil-Token": "wrong"}, {"Authorization": None}, {"ChatGPT-Account-ID": None}, {"x-api-key": "unexpected"}, {"Authorization": "not-a-bearer"}):
+            self.assertEqual(self.request({"model": "mock", "input": "hello"}, headers)[0], 403 if "X-Veil-Token" in headers else 401)
+        self.assertEqual(len(self.provider.requests), before)
+
+    def test_refresh_stays_in_codex_new_bearer_is_forwarded_per_request(self):
+        for bearer in ("old-session", "new-session"):
+            status, _ = self.request({"model": "mock", "input": "hello"}, {"Authorization": "Bearer " + bearer})
+            self.assertEqual(status, 200)
+            self.assertEqual(self.provider.requests[-1][2]["Authorization"], "Bearer " + bearer)
+        self.assertEqual(self.request({"model": "mock-error", "input": "hello"})[0], 429)
+
+    def test_subscription_destination_is_pinned(self):
+        for upstream in ("https://evil.example/backend-api/codex", "https://chatgpt.com.evil.example/backend-api/codex", "https://api.openai.com/v1", "https://chatgpt.com/other", "https://chatgpt.com/backend-api/codex?redirect=evil"):
+            with self.assertRaises(ValueError):
+                ProxyServer(("127.0.0.1", 0), upstream, "", "token", RULES, EMPTY_KEYWORDS, codex_chatgpt=True)
+
+    def test_health_needs_only_local_credential_and_other_apis_are_blocked(self):
+        self.assertEqual(self.request(None, {"Authorization": None, "ChatGPT-Account-ID": None}, path="/healthz", method="GET")[0], 200)
+        before = len(self.provider.requests)
+        self.assertEqual(self.request({"model": "mock", "messages": [{"role": "user", "content": "hello"}]}, path="/v1/messages")[0], 404)
+        self.assertEqual(len(self.provider.requests), before)
+        self.assertEqual(self.request(None, path="/v1/models?client_version=0.165.0", method="GET")[0], 200)
+        self.assertEqual(self.request(None, path="/v1/models?secret=private", method="GET")[0], 404)
+
+    def test_reasoning_is_account_bound_bounded_and_expires(self):
+        cache = ReasoningCache()
+        value = {"output": [{"type": "reasoning", "encrypted_content": "synthetic-ciphertext"}]}
+        cache.observe("account-a", value)
+        self.assertTrue(cache.check("account-a", "synthetic-ciphertext"))
+        self.assertFalse(cache.check("account-b", "synthetic-ciphertext"))
+        cache.observe("account-a", {"metadata": {"type": "reasoning", "encrypted_content": "untrusted"}})
+        self.assertFalse(cache.check("account-a", "untrusted"))
+        expiring = ReasoningCache()
+        with patch("veil_proxy.time.monotonic", return_value=1):
+            expiring.check("account-a", "expired", remember=True)
+        with patch("veil_proxy.time.monotonic", return_value=1802):
+            self.assertFalse(expiring.check("account-a", "expired"))
+        for index in range(1100):
+            cache.check("account-a", str(index), remember=True)
+        self.assertLessEqual(len(cache.entries), 1024)
+
+    def test_only_observed_reasoning_can_be_replayed(self):
+        cipher = "opaque-synthetic-ciphertext"
+        reasoning = {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": cipher}
+        payload = {"model": "mock", "input": [reasoning, {"role": "user", "content": "test@example.com"}], "include": ["reasoning.encrypted_content"]}
+        before = len(self.provider.requests)
+        self.assertEqual(self.request(payload)[0], 422)
+        self.assertEqual(len(self.provider.requests), before)
+        self.proxy.reasoning.observe("account-synthetic", {"type": "response.output_item.done", "item": reasoning})
+        self.assertEqual(self.request(payload)[0], 200)
+        sent = json.loads(self.provider.requests[-1][1])
+        self.assertEqual(sent["input"][0]["encrypted_content"], cipher)
+        self.assertEqual(sent["include"], ["reasoning.encrypted_content"])
+        self.assertNotIn(b"test@example.com", self.provider.requests[-1][1])
+        self.assertEqual(self.request(payload, {"ChatGPT-Account-ID": "other-account"})[0], 422)
+
+    def test_sse_observes_original_upstream_reasoning(self):
+        cache = ReasoningCache()
+        processor = SSEProcessor("/v1/responses", {}, observer=lambda value: cache.observe("account", value))
+        processor.process(packet({"type": "response.output_item.done", "item": {"type": "reasoning", "encrypted_content": "cipher-from-sse"}}))
+        self.assertTrue(cache.check("account", "cipher-from-sse"))
+        with self.assertRaises(PolicyError):
+            processor.process(packet({"output": [{"type": "reasoning", "encrypted_content": "untyped-frame"}]}))
+        self.assertFalse(cache.check("account", "untyped-frame"))
+
+    def test_subscription_sse_without_content_type_is_validated(self):
+        self.provider.omit_content_type = True
+        try:
+            status, body = self.request({"model": "mock", "input": "test@example.com", "stream": True})
+            self.assertEqual(status, 200, body)
+            self.assertIn(b"response.completed", body)
+        finally:
+            self.provider.omit_content_type = False
+        response = SimpleNamespace(status=200, getheader=lambda name, default=None: default, readline=io.BytesIO(b"<html>not an SSE response</html>\n\n").readline)
+        connection = SimpleNamespace(request=lambda *args, **kwargs: None, getresponse=lambda: response, close=lambda: None)
+        with patch.object(self.proxy, "connect", return_value=(connection, "/responses")):
+            self.assertEqual(self.request({"model": "mock", "input": "hello", "stream": True})[0], 502)
+
+    def test_responses_lite_text_and_tools_are_masked_and_unknown_opaque_is_blocked(self):
+        payload = {"model": "mock", "input": [
+            {"type": "additional_tools", "role": "developer", "tools": [{"type": "function", "name": "read", "parameters": {"type": "object", "properties": {"password": {"type": "string"}}}}]},
+            {"type": "agent_message", "author": "user", "recipient": "assistant", "content": [{"type": "input_text", "text": "test@example.com"}]},
+        ]}
+        self.assertEqual(self.request(payload)[0], 200)
+        self.assertNotIn(b"test@example.com", self.provider.requests[-1][1])
+        payload["input"][0]["tools"][0]["type"] = "web_search"
+        self.assertEqual(self.request(payload)[0], 422)
+        payload["input"] = [{"type": "agent_message", "author": "user", "recipient": "assistant", "content": [{"type": "encrypted_content", "encrypted_content": "untrusted"}]}]
+        self.assertEqual(self.request(payload)[0], 422)
 
 
 if __name__ == "__main__":
