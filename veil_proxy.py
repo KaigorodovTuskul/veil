@@ -30,27 +30,47 @@ CHATGPT_UPSTREAM = "https://chatgpt.com/backend-api/codex"
 
 
 class ReasoningCache:
-    """Remember account-bound hashes of opaque reasoning received from masked requests."""
+    """Keep account-bound reasoning provenance and its local restoration snapshot."""
+
+    MAX_BYTES = 16 * 1024 * 1024
 
     def __init__(self):
-        self.entries: OrderedDict[bytes, float] = OrderedDict()
+        self.entries: OrderedDict[bytes, tuple[float, dict[str, str], int]] = OrderedDict()
+        self.used_bytes = 0
         self.lock = threading.Lock()
 
-    def check(self, account: str, content: str, remember: bool = False) -> bool:
+    def check(self, account: str, content: str, remember: bool = False, *, session: MaskingSession | None = None) -> bool:
         digest = hashlib.sha256((account + "\0" + content).encode()).digest()
         with self.lock:
             now = time.monotonic()
-            while self.entries and (len(self.entries) > 1024 or next(iter(self.entries.values())) < now - 1800):
-                self.entries.popitem(last=False)
-            if remember or digest in self.entries:
-                self.entries[digest] = now
+            while self.entries and next(iter(self.entries.values()))[0] < now - 1800:
+                self.used_bytes -= self.entries.popitem(last=False)[1][2]
+            if remember:
+                mapping = dict(session.mapping) if session is not None else {}
+                # Conservative budget includes strings and per-pair Python object overhead.
+                size = 256 + sum(1024 + 4 * (len(key) + len(value)) for key, value in mapping.items())
+                if size > self.MAX_BYTES:
+                    return False
+                previous = self.entries.pop(digest, None)
+                if previous is not None:
+                    self.used_bytes -= previous[2]
+                self.entries[digest] = (now, mapping, size)
+                self.used_bytes += size
+                while len(self.entries) > 1024 or self.used_bytes > self.MAX_BYTES:
+                    self.used_bytes -= self.entries.popitem(last=False)[1][2]
+                return True
+            if digest in self.entries:
+                _, mapping, size = self.entries[digest]
+                self.entries[digest] = (now, mapping, size)
                 self.entries.move_to_end(digest)
-                while len(self.entries) > 1024:
-                    self.entries.popitem(last=False)
+                if session is not None:
+                    session.mapping.update(mapping)
+                    for token, original in mapping.items():
+                        session.tokens.setdefault(original, token)
                 return True
         return False
 
-    def observe(self, account: str, value: object) -> None:
+    def observe(self, account: str, value: object, session: MaskingSession | None = None) -> None:
         if not isinstance(value, dict):
             return
         kind = value.get("type")
@@ -64,7 +84,7 @@ class ReasoningCache:
         if isinstance(items, list):
             for item in items:
                 if isinstance(item, dict) and item.get("type") == "reasoning" and isinstance(item.get("encrypted_content"), str):
-                    self.check(account, item["encrypted_content"], remember=True)
+                    self.check(account, item["encrypted_content"], remember=True, session=session)
 
 
 def _loopback(host: str) -> bool:
@@ -264,7 +284,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if len(raw) != length:
                 raise PolicyError("Truncated request body")
             session = MaskingSession(self.server.rules, self.server.keywords)
-            trusted = (lambda content: self.server.reasoning.check(self.chatgpt_account, content)) if self.server.codex_chatgpt else None
+            trusted = (lambda content: self.server.reasoning.check(self.chatgpt_account, content, session=session)) if self.server.codex_chatgpt else None
             payload = mask_request(self.path, json_loads(raw), session, trusted_reasoning=trusted)
             self.stream_requested = payload.get("stream", False)
             self.forward(json_bytes(payload), session)
@@ -303,7 +323,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     raise PolicyError("Provider response exceeds 16 MiB")
                 parsed = json_loads(raw)
                 if self.server.codex_chatgpt:
-                    self.server.reasoning.observe(self.chatgpt_account, parsed)
+                    self.server.reasoning.observe(self.chatgpt_account, parsed, session)
                 payload = restore_response(parsed, session.mapping)
                 self.reply(response.status, payload)
             else:
@@ -323,7 +343,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 connection.close()
 
     def stream_response(self, response: http.client.HTTPResponse, session: MaskingSession) -> None:
-        observer = (lambda value: self.server.reasoning.observe(self.chatgpt_account, value)) if self.server.codex_chatgpt else None
+        observer = (lambda value: self.server.reasoning.observe(self.chatgpt_account, value, session)) if self.server.codex_chatgpt else None
         processor = SSEProcessor(self.path, session.mapping, observer=observer)
         self.close_connection = True
         event = bytearray()

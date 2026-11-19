@@ -56,6 +56,13 @@ $env:VEIL_PROXY_TOKEN = (Get-Content -Raw config/proxy_token).Trim()
 codex --profile veil-chatgpt
 ```
 
+To check the subscription proxy locally, use the separate local header:
+
+```powershell
+$headers = @{ "X-Veil-Token" = $env:VEIL_PROXY_TOKEN }
+Invoke-RestMethod http://127.0.0.1:8765/healthz -Headers $headers
+```
+
 Start a fresh text-only session. Codex sends its ChatGPT bearer/account headers
 and the separate `X-Veil-Token` local credential. Veil strips the local credential
 before forwarding. A bad local token returns 403, without asking Codex to refresh
@@ -65,8 +72,11 @@ Subscription eligibility and limits remain those of your ChatGPT account.
 Plaintext Responses Lite `agent_message` and `additional_tools` inputs are
 inspected too. Encrypted reasoning is accepted **only if that exact ciphertext
 was previously received from the provider through Veil for the same account**.
-Only its digest is cached, for 30 minutes of inactivity, with a maximum of 1024
-entries. Unknown, expired, cross-account or pre-existing opaque history is
+The cache retains its digest and the associated original-value restoration table
+**in local memory**, for 30 minutes of inactivity, with a maximum of 1024 entries
+and a conservative 16 MiB allocation budget. Earlier placeholders remain
+restorable when the model reuses them from encrypted reasoning. Unknown, expired,
+evicted, oversized or pre-existing opaque history is
 blocked. After restarting Veil or exhausting this cache, start a new session.
 Locally encrypted input that Veil has never observed cannot be inspected and is
 blocked. Images, file uploads, hosted tools and remote compaction remain blocked.
@@ -268,9 +278,11 @@ One original value gets one random-namespace placeholder across an entire reques
 Veil first collects findings across all fields, including explicit credential
 fields, then masks their occurrences throughout the request regardless of field
 order. Tool JSON Schemas are distinguished from actual argument values.
-Each request has an independent mapping; simultaneous users never share mappings.
-Mappings exist in memory until that request completes, with no database or audit
-payload storage. Process dumps and local memory access remain sensitive.
+Each request has its own mapping. Subscription requests may inherit restoration
+tables only from observed reasoning for the same account. API-mode mappings last
+until that request completes; subscription reasoning tables remain in the bounded
+cache above. There is no database or audit payload storage. Process dumps and
+local memory access remain sensitive.
 
 Unknown top-level/message/content fields are blocked. Binary/image/audio/file
 content, unverified opaque history and hosted tools cannot be sent through the

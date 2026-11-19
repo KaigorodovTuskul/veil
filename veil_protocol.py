@@ -38,7 +38,7 @@ def json_bytes(value: Any) -> bytes:
 
 
 class MaskingSession:
-    """One mapping for all fields of a request; originals never leave this object."""
+    """One request mapping, optionally seeded by trusted reasoning history."""
 
     def __init__(self, rules: list[dict], keywords: dict | None = None):
         self.rules = rules

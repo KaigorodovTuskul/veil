@@ -41,7 +41,9 @@ Veil listens on `127.0.0.1:8765` and creates a private client token in
 `config/proxy_token`. Point the agent's base URL at Veil and give it that local
 token. JSON and streaming text/tool calls are supported for Chat Completions,
 Responses and Anthropic Messages. Unsupported content and inspection failures
-are blocked, never silently forwarded. Mappings stay in request memory.
+are blocked, never silently forwarded. Mappings stay in local memory; subscription
+reasoning retains account-bound restoration tables in a bounded cache for up to
+30 idle minutes. See [proxy security details](docs/proxy.md).
 
 See the [setup guide, client examples and security boundaries](docs/proxy.md).
 Automatic detection is best-effort; a proxy does not restrict the agent's own

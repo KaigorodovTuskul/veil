@@ -519,6 +519,62 @@ class ChatGPTTests(unittest.TestCase):
         self.assertTrue(cache.check("account", "cipher-from-sse"))
         with self.assertRaises(PolicyError):
             processor.process(packet({"output": [{"type": "reasoning", "encrypted_content": "untyped-frame"}]}))
+
+    def test_reasoning_preserves_previous_turn_restoration_json_and_sse(self):
+        for streaming in (False, True):
+            with self.subTest(streaming=streaming):
+                old_tokens = []
+                reasoning = {"type": "reasoning", "summary": [], "encrypted_content": f"history-cipher-{streaming}"}
+
+                def respond(handler):
+                    raw = handler.rfile.read(int(handler.headers["Content-Length"]))
+                    self.assertNotIn(b"test@example.com", raw)
+                    self.assertNotIn(b"opaqueShortSecret", raw)
+                    if not old_tokens:
+                        old_tokens.extend(re.findall(r"\{\{VEIL_[A-Za-z0-9_]+\}\}", raw.decode()))
+                    text = " | ".join(dict.fromkeys(old_tokens))
+                    output = [reasoning, {"type": "message", "content": [{"type": "output_text", "text": text}]},
+                              {"type": "function_call", "name": "write", "arguments": json.dumps({"value": text})}]
+                    handler.send_response(200)
+                    handler.send_header("Content-Type", "text/event-stream" if streaming else "application/json")
+                    handler.end_headers()
+                    response = {"output": output, "status": "completed"}
+                    handler.wfile.write(packet({"type": "response.completed", "response": response}) if streaming else json_bytes(response))
+
+                with patch.object(MockProvider, "do_POST", respond):
+                    first = {"model": "mock", "input": "test@example.com", "metadata": {"password": "opaqueShortSecret"}, "stream": streaming}
+                    self.assertEqual(self.request(first)[0], 200)
+                    # The second reply deliberately uses only the first turn's tokens.
+                    second = {"model": "mock", "input": [reasoning, {"role": "user", "content": "Repeat opaqueShortSecret"}], "stream": streaming}
+                    status, body = self.request(second)
+                    self.assertEqual(status, 200, body)
+                    response = event_values(body)[0]["response"] if streaming else json.loads(body)
+                    text = response["output"][1]["content"][0]["text"]
+                    self.assertIn("test@example.com", text)
+                    self.assertIn("opaqueShortSecret", text)
+                    self.assertNotIn("{{VEIL_", text)
+                    self.assertEqual(json.loads(response["output"][2]["arguments"])["value"], text)
+
+    def test_reasoning_mapping_snapshot_and_memory_budget(self):
+        cache = ReasoningCache()
+        session = MaskingSession(RULES, EMPTY_KEYWORDS)
+        token = session.token("opaqueShortSecret")
+        cache.check("a", "cipher", remember=True, session=session)
+        session.mapping.clear()
+        target = MaskingSession(RULES, EMPTY_KEYWORDS)
+        self.assertTrue(cache.check("a", "cipher", session=target))
+        self.assertEqual(target.mapping[token], "opaqueShortSecret")
+        self.assertEqual(target.tokens["opaqueShortSecret"], token)
+        other = MaskingSession(RULES, EMPTY_KEYWORDS)
+        self.assertFalse(cache.check("b", "cipher", session=other))
+        self.assertEqual(other.mapping, {})
+        with patch.object(cache, "MAX_BYTES", 1600):
+            self.assertTrue(cache.check("a", "new", remember=True, session=target))
+            self.assertFalse(cache.check("a", "cipher"))
+            target.mapping["extra"] = "x" * 1000
+            self.assertFalse(cache.check("a", "oversized", remember=True, session=target))
+            self.assertFalse(cache.check("a", "oversized"))
+            self.assertLessEqual(cache.used_bytes, cache.MAX_BYTES)
         self.assertFalse(cache.check("account", "untyped-frame"))
 
     def test_subscription_sse_without_content_type_is_validated(self):

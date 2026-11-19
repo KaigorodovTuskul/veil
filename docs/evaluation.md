@@ -101,9 +101,58 @@ user's document types, with organization-specific dictionaries. It is separate
 from this completed implementation/review cycle; the current scores do not claim
 perfect redaction or certification.
 
+## Codex subscription follow-up
+
+The first subscription review covered `0d3daa6`, with 38 tests and a real Codex
+CLI 0.165.0 two-turn offline smoke. Review scores were 8.40 for privacy, 8.90 for
+user experience and 8.80 for performance (overall 8.70). A reproducible utility
+defect remained: replayed encrypted reasoning could return an old placeholder
+whose restoration table had already been discarded.
+
+The correction associates an immutable restoration snapshot with each observed
+account-bound reasoning digest. Replay imports that snapshot for restoration and
+known-secret masking. The cache keeps its 1024-entry / 30-minute idle bounds and
+adds a conservative 16 MiB allocation budget. Oversized history is not admitted;
+cache misses remain fail-closed. Original values now remain in local memory for
+the cache lifetime, as documented in SECURITY.md and proxy.md.
+
+| Final reviewer focus | Effectiveness | Simplicity / ease | Speed | Mean |
+| --- | ---: | ---: | ---: | ---: |
+| Privacy and protocol correctness | 8.9 | 8.6 | 8.7 | 8.73 |
+| Terminal user experience | 8.9 | 9.0 | 9.0 | 8.97 |
+| Performance and maintainability | 8.9 | 8.9 | 8.8 | 8.87 |
+| **Round mean** | | | | **8.86** |
+
+The unrounded mean is 79.7 / 9 = 8.8555..., above 8.5. All three reviewers
+independently rechecked the corrected working tree and found no remaining
+reproducible blocker in this scenario. Snapshot import of 1000 pairs took about
+0.06 ms. A separate 200-snapshot budget check retained 13 snapshots of 1000 pairs,
+using an estimated 16,320,044 bytes, below the 16 MiB budget. This budget is for
+the cache, not the entire Python process.
+
+All 40 tests pass. New two-turn HTTP regressions deliberately return the first
+turn's tokens in the second JSON/SSE response, including tool arguments. They
+also check inherited short-secret masking, snapshot isolation, account isolation
+and byte-budget eviction. The actual Codex subscription-profile offline smoke
+passes: two provider requests, one local file read, no original values upstream,
+correct bearer/account forwarding and unchanged source file. Previous API-mode
+Codex, Claude Code and OpenCode smoke checks also passed during the review.
+
+The rebuilt Windows executable passes subscription-mode authenticated health,
+JSON and SSE checks against a loopback mock, with no original email forwarded.
+
+A separate live check used the existing ChatGPT sign-in and gpt-6.1-sol with a
+synthetic email only. Veil masked it before the network call, the real service
+returned HTTP 200, and Codex displayed the restored email. A live attempt to read
+the synthetic file was blocked by the local Codex access policy; that policy was
+not weakened. Thus real-service echo is verified, while the successful file/tool
+workflow is established with the actual CLI and a mock provider. Automatic token
+refresh, subscription quotas and arbitrary document workflows were not tested.
+
 ## Scope of evidence
 
 Tests inspect mock-provider request bodies and exercise response reconstruction.
 They do not establish completeness of PII/secret detection, inspect real private
-documents, invoke a paid cloud model, or enforce OS-level isolation on the user's
-agent. See [proxy.md](proxy.md) and [SECURITY.md](../SECURITY.md).
+documents or enforce OS-level isolation on the user's agent. Only the separate
+subscription check above contacted a real cloud model, using synthetic content.
+See [proxy.md](proxy.md) and [SECURITY.md](../SECURITY.md).
